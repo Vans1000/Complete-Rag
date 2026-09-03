@@ -1,0 +1,99 @@
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.ant-layout {
+  background: #f5f7fa;
+}
+
+.ant-upload-drag {
+  background: #fafafa !important;
+}
+
+/* Custom Ant Design Overrides */
+.ant-card {
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.ant-card-head {
+  font-weight: 600;
+}
+
+.ant-btn {
+  border-radius: 8px;
+  transition: all 0.3s ease;
+}
+
+.ant-btn:hover {
+  transform: translateY(-1px);
+}
+
+.ant-input,
+.ant-input-textarea {
+  border-radius: 8px;
+}
+
+.ant-select-selector {
+  border-radius: 8px !important;
+}
+
+.ant-tag {
+  border-radius: 4px;
+}
+
+.ant-badge-count {
+  border-radius: 10px;
+}
+
+.ant-modal-content {
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.ant-table {
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.ant-table-thead > tr > th {
+  background: #fafafa;
+  font-weight: 600;
+}
+
+.ant-slider-track {
+  background: linear-gradient(90deg, #00d4ff, #7b2cbf);
+}
+
+.ant-slider-handle {
+  border-color: #00d4ff;
+}
+
+.ant-radio-button-wrapper-checked {
+  background: linear-gradient(135deg, #00d4ff, #7b2cbf) !important;
+  border-color: transparent !important;
+  color: white !important;
+}
+
+.ant-progress-bg {
+  background: linear-gradient(90deg, #00d4ff, #7b2cbf);
+}
+
+/* Animation for loading states */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.loading-pulse {
+  animation: pulse 1.5s ease-in-out infinite;
+}
