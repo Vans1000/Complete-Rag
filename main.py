@@ -289,20 +289,29 @@ if __name__ == "__main__":
             extra_metadata_columns=extra_cols 
         )
 
+   
     if args.ask:
         print(f"\nQ: {args.ask}")
         print("A: ", end="", flush=True)
         
-        result = rag_chat.query(args.ask, use_web_search=args.use_web, stream=False, self_correction=args.self_correction)
+        result = rag_chat.query(args.ask, use_web_search=args.use_web, stream=True, self_correction=args.self_correction)
         
         if isinstance(result, dict):
-            print(result['answer'])
-            print("\nSources:")
-            for src in result['sources']:
-                print(f"  - {src['source']} ({src.get('type', 'unknown')})")
+            print(result.get('answer', ''))
+            if result.get('sources'):
+                print("\nSources:")
+                for src in result['sources']:
+                    print(f"  - {src['source']} ({src.get('type', 'unknown')})")
+        elif hasattr(result, '__iter__') and not isinstance(result, (str, bytes)):
+            # Consume and print generator stream
+            full_text = ""
+            for chunk in result:
+                print(chunk, end="", flush=True)
+                full_text += chunk
+            print()
         else:
             print(result)
-            
+                
     elif args.chat:
         interactive_chat_mode(rag_chat, ingest_web_default=args.ingest_web, self_correction=args.self_correction)
         

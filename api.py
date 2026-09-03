@@ -23,7 +23,7 @@ from LLM import OpenAILLM, OllamaLLM, RAGChat
 from HuggingFaceDataset import HuggingFaceDataset
 from qdrant_client import QdrantClient
 from qdrant_client.models import VectorParams, Distance, SparseVectorParams
-
+from fastapi import APIRouter
 
 # Global state
 app_state = {
@@ -133,6 +133,13 @@ def get_rag_chat():
     return app_state["rag_chat"]
 
 
+@app.get("/collections/active")
+async def get_active_collection():
+    """Return the currently active collection name"""
+    if app_state["vector_db"] is None:
+        raise HTTPException(status_code=503, detail="Vector DB not initialized")
+    return {"collection": app_state["vector_db"].collection_name}
+
 @app.get("/config/tree_rag")
 async def get_tree_rag():
     return {"enabled": app_state.get("tree_rag_enabled", False)}
@@ -189,7 +196,21 @@ async def get_available_models(provider: str = FastAPIQuery(...)):
     else:
         return {"models": [], "default_base": ""}
 
-
+@app.get("/config/llm")
+async def get_llm_config():
+    """Return the current LLM configuration."""
+    rag_chat = app_state.get("rag_chat")
+    if rag_chat is None:
+        return {"provider": None, "model": None}
+    # Assuming your LLM instance has provider and model attributes
+    llm = rag_chat.llm
+    provider = "ollama" if hasattr(llm, "base_url") and "ollama" in llm.base_url else "openai"
+    return {
+        "provider": provider,
+        "model": llm.model if hasattr(llm, "model") else None,
+        "base_url": getattr(llm, "base_url", None)
+    }
+    
 @app.get("/config/tokenizer")
 async def get_tokenizer_config():
     if app_state["tokenizer"] is None:

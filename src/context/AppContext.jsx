@@ -5,7 +5,7 @@ const AppContext = createContext();
 export const AppProvider = ({ children }) => {
   const [mode, setMode] = useState('local');
   const [webIngest, setWebIngest] = useState(false);
-  const [currentCollection, setCurrentCollection] = useState(null);
+  const [currentCollection, setCurrentCollection] = useState(null); // Now used across the app
   const [treeRagEnabled, setTreeRagEnabled] = useState(false);
 
   const [llmConfig, setLlmConfig] = useState(() => {

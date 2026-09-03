@@ -14,11 +14,10 @@ export const ChatPage = () => {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
-  const [selectedCollection, setSelectedCollection] = useState(null);
+  // Use context for collection
+  const { mode, webIngest, llmConfig, currentCollection, setCurrentCollection, treeRagEnabled, setTreeRagEnabled } = useAppContext();
   const [uploadingFiles, setUploadingFiles] = useState([]);
-  const { mode, webIngest, llmConfig } = useAppContext();
   const messagesEndRef = useRef(null);
-  const { treeRagEnabled, setTreeRagEnabled } = useAppContext();
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -139,8 +138,8 @@ export const ChatPage = () => {
     
     const formData = new FormData();
     formData.append('file', file);
-    if (selectedCollection) {
-      formData.append('collection', selectedCollection);
+    if (currentCollection) {
+      formData.append('collection', currentCollection);
     }
     formData.append('tree_rag', treeRagEnabled ? 'true' : 'false');  
 
@@ -187,8 +186,8 @@ export const ChatPage = () => {
       <Sider width={320} className="chat-sider">
         <Card size="small" title="Collection" className="sider-card">
           <CollectionSelector 
-            value={selectedCollection} 
-            onChange={setSelectedCollection} 
+            value={currentCollection} 
+            onChange={setCurrentCollection} 
           />
         </Card>
 

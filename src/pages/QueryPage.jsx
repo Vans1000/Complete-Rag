@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Layout, Input, Button, Table, Card, Slider, Space, Typography, Upload, message, Badge, Spin } from 'antd';
 import { SearchOutlined, InboxOutlined, FileOutlined, LoadingOutlined, CloseCircleOutlined } from '@ant-design/icons';
 import { CollectionSelector } from '../components/CollectionSelector';
+import { useAppContext } from '../context/AppContext';
 
 const { Sider, Content } = Layout;
 const { Title, Text } = Typography;
@@ -11,10 +12,10 @@ export const QueryPage = () => {
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [topK, setTopK] = useState(10);
-  const [collection, setCollection] = useState(null);
+  const { currentCollection, setCurrentCollection } = useAppContext();
   const [uploadingFiles, setUploadingFiles] = useState([]);
 
-    const handleSearch = async () => {
+  const handleSearch = async () => {
     if (!query.trim()) return;
     setLoading(true);
     try {
@@ -47,7 +48,7 @@ export const QueryPage = () => {
     
     const formData = new FormData();
     formData.append('file', file);
-    if (collection) formData.append('collection', collection);
+    if (currentCollection) formData.append('collection', currentCollection);
     
     try {
       const response = await fetch('/ingest/file', { method: 'POST', body: formData });
@@ -131,7 +132,7 @@ export const QueryPage = () => {
     <Layout className="query-layout">
       <Sider width={320} className="query-sider">
         <Card size="small" title="Collection" className="sider-card">
-          <CollectionSelector value={collection} onChange={setCollection} />
+          <CollectionSelector value={currentCollection} onChange={setCurrentCollection} />
         </Card>
 
         <Card size="small" title="Upload Documents" className="sider-card">

@@ -7,8 +7,28 @@ export const CollectionSelector = ({ value, onChange }) => {
   const [newCollectionName, setNewCollectionName] = useState('');
   const [loading, setLoading] = useState(false);
 
+
   useEffect(() => {
-    fetchCollections();
+    const fetchData = async () => {
+      await fetchCollections();
+      // After fetching list, get the active collection
+      try {
+        const res = await fetch('/collections/active');
+        const data = await res.json();
+        if (data.collection && collections.includes(data.collection)) {
+          onChange(data.collection);
+        } else if (collections.length > 0) {
+          // fallback to first
+          onChange(collections[0]);
+        }
+      } catch (error) {
+        console.error('Failed to fetch active collection');
+        if (collections.length > 0) {
+          onChange(collections[0]);
+        }
+      }
+    };
+    fetchData();
     const interval = setInterval(fetchCollections, 5000);
     return () => clearInterval(interval);
   }, []);

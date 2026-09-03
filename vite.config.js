@@ -3,7 +3,7 @@ import react from "@vitejs/plugin-react"
 import { defineConfig } from "vite"
 
 export default defineConfig({
-  base: './',
+  base: '/',
   plugins: [react()],
   resolve: {
     alias: {
@@ -13,41 +13,37 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-      target: 'http://127.0.0.1:8000',
-      changeOrigin: true,
-      rewrite: (path) => path.replace(/^\/api/, '')
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
       },
-      // 1. Vector Search (The one causing your 405/404)
-
-      // 2. LLM Configuration & Model Fetching
       '/config': {
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,
       },
-      // 3. RAG Chat & Streaming
-      '/chat': {
-        target: 'http://127.0.0.1:8000',
-        changeOrigin: true,
-      },
-      // 4. Data Ingestion (File uploads, Web URLs, HF Datasets)
       '/ingest': {
-        target: 'http://127.0.0.1:8000',
-        changeOrigin: true,
-      },
-      // 5. Collection Management (Switching/Creating)
-      '/collections': {
-        target: 'http://127.0.0.1:8000',
-        changeOrigin: true,
-      },
-      // 6. Dashboard Stats & System Health
-      '/dashboard': {
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,
       },
       '/health': {
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,
-      }
+      },
+      '/collections': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
+      '/dashboard/stats': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
+      '/dashboard/points': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
+      '/chat/stream': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
     }
   }
 });
