@@ -107,11 +107,12 @@ class File:
 
         full_text = doc.export_to_markdown()
 
+        # Prevent splitting inside equations by prioritizing newline/paragraph breaks
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=3000,
             chunk_overlap=500,
             length_function=len,
-            separators=["\n\n", "\n", " ", ""]
+            separators=["\n\n$$\n\n", "\n\n", "\n", " ", ""]
         )
 
         page_texts = {}
@@ -123,10 +124,23 @@ class File:
                 text_content = item.text
             
             elif isinstance(item, FormulaItem):
+                # Check all common Docling LaTeX attributes
+                latex_val = None
                 if hasattr(item, 'latex') and item.latex:
-                    text_content = f"$$ {item.latex} $$" 
+                    latex_val = item.latex
                 elif hasattr(item, 'text') and item.text:
-                    text_content = item.text
+                    latex_val = item.text
+                elif hasattr(item, 'formula') and item.formula:
+                    latex_val = item.formula
+
+                if latex_val:
+                    latex_str = str(latex_val).strip()
+                    # Ensure properly formatted display LaTeX
+                    if not (latex_str.startswith("$$") and latex_str.endswith("$$")):
+                        latex_str = latex_str.strip("$")
+                        text_content = f"$$ {latex_str} $$"
+                    else:
+                        text_content = latex_str
             
             elif isinstance(item, TableItem):
                 if hasattr(item, 'export_to_markdown'):
@@ -135,14 +149,12 @@ class File:
                     text_content = str(item.text) if hasattr(item, 'text') else None
 
             if text_content:
-
                 page_no = 0 
                 if hasattr(item, 'prov') and item.prov:
                     try:
                         p = item.prov[0]
                         if hasattr(p, 'page_no') and p.page_no is not None:
                             page_no = p.page_no
-              
                     except (IndexError, AttributeError):
                         pass
                 
@@ -153,7 +165,6 @@ class File:
 
         if not page_texts:
             page_texts[1] = [full_text]
-
 
         for page_num in sorted(page_texts.keys()):
             page_text = "\n\n".join(page_texts[page_num]).strip()
@@ -175,7 +186,7 @@ class File:
                     'dense_vector': text_dense,
                     'sparse_vector': text_sparse,
                     'path': str(file_path)
-                })
+                }) 
 
         img_idx = 0
         for item, level in doc.iterate_items():
