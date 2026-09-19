@@ -13,6 +13,9 @@ from VectorDatabase import VectorDatabase
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 import TreeRag
 from typing import Optional
+from docling.datamodel.pipeline_options import RapidOcrOptions
+
+
 class File:
     def __init__(self, file_path, tokenizer=None, vector_db=None):
         self.filePath = file_path
@@ -40,7 +43,6 @@ class File:
     @staticmethod
     def extract_pil_image_from_item(item):
         """Extract PIL image from a Docling PictureItem across different API versions"""
-        # Try different attribute paths depending on docling version
         if hasattr(item, 'image') and item.image is not None:
             img = item.image
             if isinstance(img, Image.Image):
@@ -68,21 +70,18 @@ class File:
 
     @staticmethod
     def create_converter():
-        
         pipeline_options = PdfPipelineOptions()
         pipeline_options.generate_picture_images = True
         pipeline_options.images_scale = 1.5
         
+        if hasattr(pipeline_options, 'do_formula_enrichment'):
+            pipeline_options.do_formula_enrichment = True
 
         try:
-
-            pipeline_options.ocr_options = EasyOcrOptions(use_gpu=False)
+            pipeline_options.ocr_options = RapidOcrOptions()
         except ImportError:
             pass
 
-        #settings.perf.doc_batch_size = 1  
-        #settings.perf.doc_batch_concurrency = 1
-        
         try:
             converter = DocumentConverter(
                 format_options={
@@ -99,7 +98,11 @@ class File:
             tokenizer = Tokenizer()
 
         converter = File.create_converter()
+        print(f">>> Converting {file_path}...", flush=True)
+
         result = converter.convert(str(file_path))
+        print(">>> Conversion done", flush=True)
+
         doc = result.document
 
         text_data = []
@@ -107,12 +110,11 @@ class File:
 
         full_text = doc.export_to_markdown()
 
-        # Prevent splitting inside equations by prioritizing newline/paragraph breaks
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=3000,
             chunk_overlap=500,
             length_function=len,
-            separators=["\n\n$$\n\n", "\n\n", "\n", " ", ""]
+            separators=["\n\n\n", "\n\n", "\n", " ", ""]
         )
 
         page_texts = {}
@@ -124,7 +126,6 @@ class File:
                 text_content = item.text
             
             elif isinstance(item, FormulaItem):
-                # Check all common Docling LaTeX attributes
                 latex_val = None
                 if hasattr(item, 'latex') and item.latex:
                     latex_val = item.latex
@@ -135,12 +136,11 @@ class File:
 
                 if latex_val:
                     latex_str = str(latex_val).strip()
-                    # Ensure properly formatted display LaTeX
                     if not (latex_str.startswith("$$") and latex_str.endswith("$$")):
                         latex_str = latex_str.strip("$")
-                        text_content = f"$$ {latex_str} $$"
+                        text_content = f"\n$$ {latex_str} $$\n"
                     else:
-                        text_content = latex_str
+                        text_content = f"\n{latex_str}\n"
             
             elif isinstance(item, TableItem):
                 if hasattr(item, 'export_to_markdown'):
@@ -204,11 +204,9 @@ class File:
 
             image_bytes = File.pil_image_to_bytes(pil_image)
 
-            # Save to cache
             cache_path = File.get_image_cache_path(file_path, img_idx)
             pil_image.save(str(cache_path), 'PNG')
 
-            # Get page number
             page_no = 1
             if hasattr(item, 'prov') and item.prov:
                 try:
@@ -247,17 +245,14 @@ class File:
 
         return full_text, text_data, image_data
 
-
     @staticmethod
     def ProcessDocuments(path, tokenizer, vector_db, tree_rag_engine: Optional['TreeRAG'] = None):
         if Path(path).is_file():
             full_text, text_data, image_data = File.Parsing(path, tokenizer)
             
             if tree_rag_engine:
-            # TreeRAG handles embedding and hierarchical ingestion for text
                 tree_rag_engine.build_tree_and_ingest(leaf_chunks=text_data)
             else:
-            # Standard flat chunking upload
                 for idx, data in enumerate(text_data):
                     dense_vec = data.pop('dense_vector')
                     sparse_vec = data.pop('sparse_vector')

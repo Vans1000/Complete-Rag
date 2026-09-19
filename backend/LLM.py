@@ -28,6 +28,11 @@ class OpenAILLM(BaseLLM):
         
         self.system_prompt = """You are a helpful AI assistant with access to retrieved documents and web search results. 
 Use the provided context to answer the user's question. If the context doesn't contain the answer, say so clearly.
+
+### LATEX & MATHEMATICAL FORMULAS:
+- When returning mathematical equations or formulas present in the context, ALWAYS preserve valid LaTeX formatting.
+- Use `$$ ... $$` for block/display equations and `$ ... $` for inline formulas.
+
 ### UNIT CONVERSION RULES:
 - If the user is asking about a location in the United States, ALWAYS provide weather and measurements in Imperial units (Fahrenheit, mph, inches).
 - If the source data is in Metric (Celsius, km/h), you MUST convert it to Imperial before responding.
@@ -78,8 +83,9 @@ class OllamaLLM(BaseLLM):
     def __init__(self, model: str = "mlx-community/Qwen3.8-27B-4bit", base_url: str = "http://localhost:11434"):
         self.model = model
         self.base_url = base_url.rstrip('/')
-        self.system_prompt = """You are a helpful AI assistant. Use the provided context to answer questions accurately. Cite sources when possible."""
-    
+        self.system_prompt = """You are a helpful AI assistant. Use the provided context to answer questions accurately.
+When returning mathematical formulas, format them in valid LaTeX notation ($$for block formulas,$ for inline formulas). Cite sources when possible."""
+
     def chat(self, messages: List[Dict], stream: bool = False, **kwargs) -> Union[str, Generator]:
         payload = {
             "model": self.model,

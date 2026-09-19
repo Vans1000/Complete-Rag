@@ -25,7 +25,6 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import VectorParams, Distance, SparseVectorParams
 from fastapi import APIRouter
 
-# Global state
 app_state = {
     "tokenizer": None,
     "vector_db": None,
@@ -34,7 +33,6 @@ app_state = {
     "tree_rag_enabled": None
 }
 
-# In-memory upload progress tracking
 upload_progress: Dict[str, dict] = {}
 
 
@@ -117,7 +115,6 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS middleware for React frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
@@ -202,7 +199,6 @@ async def get_llm_config():
     rag_chat = app_state.get("rag_chat")
     if rag_chat is None:
         return {"provider": None, "model": None}
-    # Assuming your LLM instance has provider and model attributes
     llm = rag_chat.llm
     provider = "ollama" if hasattr(llm, "base_url") and "ollama" in llm.base_url else "openai"
     return {
@@ -270,6 +266,7 @@ async def configure_websearch(config: WebSearchConfig):
 
 
 @app.post("/query")
+@app.post("/api/query")
 async def query(request: QueryRequest):
     """Search vector database without LLM generation"""
     try:
@@ -408,8 +405,7 @@ async def ingest_file(
                         vector_db=app_state["vector_db"],
                         llm=app_state["rag_chat"].llm
                     )
-                # ProcessDocuments handles parsing, tokenizing, and vector db upload synchronously.
-                # Once this returns, the file is entirely in the vector database.
+
                 DocumentProcessor.ProcessDocuments(
                     file_path, 
                     app_state["tokenizer"], 
@@ -470,7 +466,6 @@ async def ingest_web(request: IngestURLRequest, background_tasks: BackgroundTask
                 temp_dir = tempfile.mkdtemp()
                 url = request.url
 
-                # Check if URL directly targets a file or downloadable resource
                 if any(url.lower().endswith(ext) for ext in ['.pdf', '.docx', '.txt', '.png', '.jpg', '.jpeg', '.webp']):
                     local_filename = os.path.basename(url.split('?')[0])
                     file_path = os.path.join(temp_dir, local_filename)
@@ -491,7 +486,6 @@ async def ingest_web(request: IngestURLRequest, background_tasks: BackgroundTask
                         app_state["vector_db"]
                     )
                 else:
-                    # Generic web search and crawl taking text, inline images, and documents
                     upload_progress[upload_id]["status"] = "encoding"
                     upload_progress[upload_id]["progress"] = 20
                     upload_progress[upload_id]["message"] = "Parsing and encoding webpage..."

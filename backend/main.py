@@ -12,7 +12,6 @@ from HuggingFaceDataset import HuggingFaceDataset
 from transformers import logging
 from TreeRag import TreeRAG
 
-# New imports
 from WebSearch import WebSearch
 from LLM import OpenAILLM, OllamaLLM, RAGChat
 import api
@@ -87,7 +86,6 @@ def interactive_chat_mode(rag_chat: RAGChat, ingest_web_default: bool = False, s
     
     while True:
         try:
-            # Update the prompt to show active modes
             mode_prefix = "Local"
             if force_web:
                 mode_prefix = "FORCE-WEB"
@@ -107,18 +105,17 @@ def interactive_chat_mode(rag_chat: RAGChat, ingest_web_default: bool = False, s
                 continue
             elif user_input == "/web":
                 use_web = not use_web
-                force_web = False  # Turn off force if regular web is toggled
+                force_web = False  
                 print(f"Web search: {'ON' if use_web else 'OFF'}")
                 continue
             elif user_input == "/forceweb":
                 force_web = not force_web
-                use_web = False    # Turn off regular web if force is toggled
+                use_web = False   
                 print(f"Forced web search: {'ON' if force_web else 'OFF'}")
                 continue
             
             print("Assistant: ", end="", flush=True)
             
-            # Pass both flags to the query method
             response_gen = rag_chat.query(
                 question=user_input,
                 use_web_search=use_web or force_web,
@@ -210,6 +207,8 @@ if __name__ == "__main__":
     if not args.huggingface_dataset:
         if args.hf_subset != None or args.hf_split != "train" or args.hf_text_col != "text" or args.hf_id_col != "id":
             parser.error("--hf_subset, --hf_split, --hf_text_col, and --hf_id_col can only be used with --huggingface_dataset.")
+    
+    print(">>> loading Tokenizer...", flush=True)
 
     tokenizer = Tokenizer(
         dense_model=args.dense_model,
@@ -218,8 +217,14 @@ if __name__ == "__main__":
         vision_rerank_model=args.vision_rerank_model,
         caption_model=args.caption_model
     )
+    
+    print(">>> Tokenizer ready", flush=True)
+
     vector_db = VectorDatabase(collection_name=args.collection_name)
     
+    
+    print(">>> Vector DB ready", flush=True)
+
     web_search = None
     if args.web_search or args.use_web or args.ingest_web or args.api:
         web_search = WebSearch(tokenizer, vector_db, max_results=args.web_results)
@@ -303,7 +308,6 @@ if __name__ == "__main__":
                 for src in result['sources']:
                     print(f"  - {src['source']} ({src.get('type', 'unknown')})")
         elif hasattr(result, '__iter__') and not isinstance(result, (str, bytes)):
-            # Consume and print generator stream
             full_text = ""
             for chunk in result:
                 print(chunk, end="", flush=True)
