@@ -230,14 +230,13 @@ if __name__ == "__main__":
         web_search = WebSearch(tokenizer, vector_db, max_results=args.web_results)
     
     rag_chat = None
-    if args.chat or args.ask or args.api:
+    if (args.chat or args.ask) and not args.api:
         if args.llm_provider == "openai":
             llm = OpenAILLM(model=args.llm_model, base_url=args.llm_base_url)
         else:
             llm = OllamaLLM(model=args.llm_model, base_url=args.llm_base_url or "http://localhost:11434")
-        
-        rag_chat = RAGChat(llm=llm, vector_db=vector_db, tokenizer=tokenizer, web_search=web_search)
 
+        rag_chat = RAGChat(llm=llm, vector_db=vector_db, tokenizer=tokenizer, web_search=web_search)
     if args.web_search:
         web_search_mode(web_search, args.web_search, args.ingest_web)
         if not args.chat and not args.ask: 
@@ -250,12 +249,11 @@ if __name__ == "__main__":
         sys.exit(0)
     
     llm = None
-    if args.chat or args.ask or args.api or args.tree_rag:
+    if args.chat or args.ask or args.tree_rag:
         if args.llm_provider == "openai":
             llm = OpenAILLM(model=args.llm_model, base_url=args.llm_base_url)
         else:
             llm = OllamaLLM(model=args.llm_model, base_url=args.llm_base_url or "http://localhost:11434")
-    
     
     if args.tree_rag:
         if llm is None:

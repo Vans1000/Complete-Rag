@@ -17,14 +17,26 @@ class BaseLLM(ABC):
 
 
 class OpenAILLM(BaseLLM):
-    def __init__(self, api_key: Optional[str] = None, base_url: Optional[str] = None, 
+    def __init__(self, api_key: Optional[str] = None, base_url: Optional[str] = None,
                  model: str = "gpt-4o-mini", temperature: float = 0.7):
-        self.client = openai.OpenAI(
-            api_key=api_key or os.getenv("OPENAI_API_KEY") or "not-needed",
-            base_url=base_url or os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
-        )
+        resolved_base = base_url or os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1"
+        is_local = any(h in resolved_base.lower()
+                       for h in ("localhost", "127.0.0.1", "0.0.0.0", "::1"))
+
+        resolved_key = api_key or (None if is_local else os.getenv("OPENAI_API_KEY"))
+        if not resolved_key:
+            if is_local:
+                resolved_key = "not-needed"
+            else:
+                raise ValueError(
+                    "OpenAILLM requires an api_key for non-local base_url "
+                    f"({resolved_base}). Pass api_key= or set OPENAI_API_KEY."
+                )
+
+        self.client = openai.OpenAI(api_key=resolved_key, base_url=resolved_base)
         self.model = model
         self.temperature = temperature
+        self.base_url = resolved_base
         
         self.system_prompt = """You are a helpful AI assistant with access to retrieved documents and web search results. 
 Use the provided context to answer the user's question. If the context doesn't contain the answer, say so clearly.

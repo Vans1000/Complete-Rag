@@ -35,6 +35,25 @@ app_state = {
 
 upload_progress: Dict[str, dict] = {}
 
+_STATIC_MODELS = {
+    "openai": ["gpt-4o-mini", "gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo"],
+    "ollama": ["llama3.2", "mistral", "gemma2", "mixtral", "llama3.1"],
+    "lm_studio": [],
+    "custom": [],
+}
+_STATIC_BASES = {
+    "openai": "https://api.openai.com/v1",
+    "ollama": "http://localhost:11434",
+    "lm_studio": "http://localhost:1234/v1",
+    "custom": "",
+}
+
+def _is_local_url(url: Optional[str]) -> bool:
+    if not url:
+        return False
+    u = url.lower()
+    return any(h in u for h in ("localhost", "127.0.0.1", "0.0.0.0", "::1"))
+
 
 class QueryRequest(BaseModel):
     query: str
@@ -58,7 +77,7 @@ class IngestURLRequest(BaseModel):
 
 
 class LLMConfig(BaseModel):
-    provider: str 
+    provider: str = "openai"
     model: str 
     api_key: Optional[str] = None
     base_url: Optional[str] = None
@@ -108,6 +127,47 @@ async def lifespan(app: FastAPI):
     pass
 
 
+async def _validate_llm(prov: str, base: str, api_key: Optional[str], model: str) -> None:
+    """
+    Do a cheap authenticated round-trip to confirm credentials + reachability.
+    Raises HTTPException(400) with the provider's message on failure.
+    """
+    base = (base or "").rstrip("/")
+
+    if prov == "ollama":
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(f"{base or 'http://localhost:11434'}/api/tags")
+                resp.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(400, f"Ollama returned {e.response.status_code}: {e.response.text[:200]}")
+        except Exception as e:
+            raise HTTPException(400, f"Cannot reach Ollama at {base}: {e}")
+        return
+
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.get(f"{base}/models", headers=headers)
+    except Exception as e:
+        raise HTTPException(400, f"Cannot reach provider at {base}: {e}")
+
+    if resp.status_code == 401:
+        raise HTTPException(400, "Authentication failed — the API key was rejected (401).")
+    if resp.status_code == 403:
+        raise HTTPException(400, "Authentication failed — the API key lacks permission (403).")
+    if resp.status_code >= 400:
+        raise HTTPException(400, f"Provider returned {resp.status_code}: {resp.text[:200]}")
+
+    try:
+        data = resp.json()
+        ids = {m.get("id") or m.get("name") for m in (data.get("data") or data.get("models") or [])}
+        if ids and model and model not in ids and not any(model in i for i in ids if i):
+            print(f"[LLM Validate] Warning: model '{model}' not in provider listing "
+                  f"({len(ids)} models returned). Proceeding anyway.")
+    except Exception:
+        pass
+
 app = FastAPI(
     title="RAG Engine API",
     description="Multimodal RAG with Web Search and LLM Integration",
@@ -148,63 +208,128 @@ async def set_tree_rag(data: dict):
 
 @app.post("/config/llm")
 async def configure_llm(config: LLMConfig):
-    """Configure the LLM provider"""
+    """Configure the LLM provider (OpenAI, Ollama, LM Studio, or any OpenAI-compatible endpoint)."""
     try:
-        prov = config.provider.lower() if config.provider else "openai"
-        
+        prov = (config.provider or "openai").lower()
+        base = (config.base_url or "").rstrip("/")
+
         if prov == "ollama":
-            llm = OllamaLLM(
-                model=config.model,
-                base_url=config.base_url or "http://localhost:11434"
-            )
+            base = base or "http://localhost:11434"
+            effective_key = None
         else:
-            llm = OpenAILLM(
-                api_key=config.api_key or "sk-no-key-required",
-                base_url=config.base_url,
-                model=config.model
-            )
-        
+            if not base:
+                base = "https://api.openai.com/v1"
+            if config.api_key:
+                effective_key = config.api_key
+            elif prov == "openai" and not _is_local_url(base):
+                raise HTTPException(400, "API key is required for the OpenAI provider.")
+            else:
+                effective_key = "not-needed"
+
+        await _validate_llm(prov, base, effective_key, config.model)
+
+        if prov == "ollama":
+            llm = OllamaLLM(model=config.model, base_url=base)
+        else:
+            llm = OpenAILLM(api_key=effective_key, base_url=base, model=config.model)
+
         app_state["rag_chat"] = RAGChat(
             llm=llm,
             vector_db=app_state["vector_db"],
             tokenizer=app_state["tokenizer"],
-            web_search=app_state["web_search"]
+            web_search=app_state["web_search"],
         )
-        
-        return {"status": "success", "provider": config.provider, "model": config.model}
+
+        return {
+            "status": "success",
+            "provider": prov,
+            "model": config.model,
+            "base_url": base,
+        }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/config/llm/models")
-async def get_available_models(provider: str = FastAPIQuery(...)):
-    """Return suggested models for provider"""
-    p = provider.lower()
-    if p == "openai":
+async def get_available_models(
+    provider: str = FastAPIQuery(...),
+    base_url: Optional[str] = FastAPIQuery(None),
+    api_key: Optional[str] = FastAPIQuery(None),
+):
+    """
+    Live-probe the provider for its model list.
+    - Ollama          -> GET {base}/api/tags
+    - OpenAI-compatible (openai, lm_studio, custom) -> GET {base}/models
+    Falls back to a static list if the probe fails.
+    """
+    p = (provider or "openai").lower()
+    base = (base_url or _STATIC_BASES.get(p) or "").rstrip("/")
+
+    if p == "ollama":
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(f"{base}/api/tags")
+                resp.raise_for_status()
+                data = resp.json()
+                models = [m.get("name") for m in data.get("models", []) if m.get("name")]
+                if models:
+                    return {"models": sorted(models), "default_base": base, "source": "live"}
+        except Exception as e:
+            print(f"[Models] Ollama probe failed at {base}: {e}")
         return {
-            "models": ["gpt-4o-mini", "gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo"],
-            "default_base": "https://api.openai.com/v1"
+            "models": _STATIC_MODELS["ollama"],
+            "default_base": base or _STATIC_BASES["ollama"],
+            "source": "fallback",
         }
-    elif p == "ollama":
-        return {
-            "models": ["llama3.2", "mistral", "gemma2", "mixtral", "llama3.1"],
-            "default_base": "http://localhost:11434"
-        }
-    else:
-        return {"models": [], "default_base": ""}
+
+    headers = {}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    elif _is_local_url(base):
+        headers["Authorization"] = "Bearer not-needed"
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(f"{base}/models", headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+            items = data.get("data") or data.get("models") or []
+            models = sorted({m.get("id") or m.get("name") for m in items if (m.get("id") or m.get("name"))})
+            if models:
+                return {"models": models, "default_base": base, "source": "live"}
+    except Exception as e:
+        print(f"[Models] {p} probe failed at {base}: {e}")
+
+    return {
+        "models": _STATIC_MODELS.get(p, []),
+        "default_base": base or _STATIC_BASES.get(p, ""),
+        "source": "fallback",
+    }
 
 @app.get("/config/llm")
 async def get_llm_config():
-    """Return the current LLM configuration."""
     rag_chat = app_state.get("rag_chat")
     if rag_chat is None:
-        return {"provider": None, "model": None}
+        return {"provider": None, "model": None, "base_url": None}
+
     llm = rag_chat.llm
-    provider = "ollama" if hasattr(llm, "base_url") and "ollama" in llm.base_url else "openai"
+    base = (getattr(llm, "base_url", "") or "").lower()
+
+    if isinstance(llm, OllamaLLM) or "11434" in base or "ollama" in base:
+        provider = "ollama"
+    elif "1234" in base:
+        provider = "lm_studio"
+    elif base and "api.openai.com" not in base:
+        provider = "custom"
+    else:
+        provider = "openai"
+
     return {
         "provider": provider,
-        "model": llm.model if hasattr(llm, "model") else None,
-        "base_url": getattr(llm, "base_url", None)
+        "model": getattr(llm, "model", None),
+        "base_url": getattr(llm, "base_url", None),
     }
     
 @app.get("/config/tokenizer")
