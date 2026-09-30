@@ -40,7 +40,6 @@ const fetchModels = async (currentProvider, currentBaseUrl) => {
     if (visible) {
       const initialValues = {
         provider: llmConfig.provider,
-        // Wrap the initial model string in an array:
         model: llmConfig.model ? [llmConfig.model] : [], 
         baseUrl: llmConfig.baseUrl || (llmConfig.provider === 'openai' 
           ? 'https://api.openai.com/v1' 
@@ -68,13 +67,13 @@ const fetchModels = async (currentProvider, currentBaseUrl) => {
       const values = await form.validateFields();
       setLoading(true);
       setTestStatus(null);
-
+      const selectedModel = Array.isArray(values.model) ? values.model[0] : values.model;
       const response = await fetch('/config/llm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           provider: values.provider,
-          model: values.model,
+          model: selectedModel,
           api_key: values.apiKey,
           base_url: values.baseUrl
         })
@@ -95,8 +94,10 @@ const fetchModels = async (currentProvider, currentBaseUrl) => {
         }, 1000);
       } else {
         const error = await response.json();
-        setTestStatus({ type: 'error', message: error.detail || 'Configuration failed' });
-      }
+        const errorMessage = typeof error.detail === 'object' 
+            ? JSON.stringify(error.detail) 
+            : (error.detail || 'Configuration failed');
+          setTestStatus({ type: 'error', message: errorMessage });      }
     } catch (error) {
       setTestStatus({ type: 'error', message: error.message });
     } finally {

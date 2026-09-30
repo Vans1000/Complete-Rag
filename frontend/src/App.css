@@ -781,3 +781,18 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #a8a8a8;
 }
+
+
+.chat-toolbar {
+  max-width: 900px;
+  width: 100%;
+  margin: 0 auto 12px auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 4px;
+}
+
+.chat-toolbar-title {
+  font-size: 12px;
+}

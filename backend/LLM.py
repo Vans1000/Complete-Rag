@@ -32,14 +32,14 @@ Use the provided context to answer the user's question. If the context doesn't c
 ### LATEX & MATHEMATICAL FORMULAS:
 - When returning mathematical equations or formulas present in the context, ALWAYS preserve valid LaTeX formatting.
 - Use `$$ ... $$` for block/display equations and `$ ... $` for inline formulas.
-
+- Fix latex if needed
 ### UNIT CONVERSION RULES:
 - If the user is asking about a location in the United States, ALWAYS provide weather and measurements in Imperial units (Fahrenheit, mph, inches).
 - If the source data is in Metric (Celsius, km/h), you MUST convert it to Imperial before responding.
 - For non-US locations, use the units standard for that region unless the user specifies otherwise.
 
 ### CITATION RULES:
-- Always cite your sources by placing the 'SOURCE LINK' and 'CONTENT' in parentheses at the end of the sentence, like (Source: https://example.com - Content: ...).
+- Always cite your sources by placing the 'SOURCE LINK' and 'CONTENT' in parentheses at the end of the sentence, like (Source: https://example.com - Content: ...). You must follow this format:  (Source: https://example.com - Content: ...)
 """
     
     def chat(self, messages: List[Dict], stream: bool = False, **kwargs) -> Union[str, Generator]:
@@ -84,7 +84,8 @@ class OllamaLLM(BaseLLM):
         self.model = model
         self.base_url = base_url.rstrip('/')
         self.system_prompt = """You are a helpful AI assistant. Use the provided context to answer questions accurately.
-When returning mathematical formulas, format them in valid LaTeX notation ($$for block formulas,$ for inline formulas). Cite sources when possible."""
+When returning mathematical formulas, format them in valid LaTeX notation ($$for block formulas,$ for inline formulas). Fix the latex syntax if needed.
+Cite sources when possible. You must follow this format:  (Source: https://example.com - Content: ...) or (Source: ~/path/to/file Page:{} - Content: ...) . The content should be a direct copy of the source text, not a summary or paraphrase. Include direct quotes from the source when relevant. If the context doesn't contain the answer, say so clearly."""
 
     def chat(self, messages: List[Dict], stream: bool = False, **kwargs) -> Union[str, Generator]:
         payload = {

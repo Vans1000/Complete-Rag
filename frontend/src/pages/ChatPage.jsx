@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Layout, Input, Button, message, Upload, Card, List, Typography, Spin, Badge, Progress } from 'antd';
-import { InboxOutlined, SendOutlined, LoadingOutlined, FileOutlined, CloseCircleOutlined } from '@ant-design/icons';
+import { Layout, Input, Button, message, Upload, Card, List, Typography, Spin, Badge, Progress, Tooltip } from 'antd';
+import { InboxOutlined, SendOutlined, LoadingOutlined, FileOutlined, CloseCircleOutlined, DeleteOutlined } from '@ant-design/icons';
 import { CollectionSelector } from '../components/CollectionSelector';
 import { ModeToggle } from '../components/ModeToggle';
+import { MarkdownRenderer } from '../components/MarkdownRenderer';
 import { useAppContext } from '../context/AppContext';
 import { Switch } from 'antd';
 
@@ -10,14 +11,68 @@ const { Sider, Content } = Layout;
 const { Text } = Typography;
 const { Dragger } = Upload;
 
+const HISTORY_PREFIX = 'rag_chat_history_';
+const historyKey = (collection) => `${HISTORY_PREFIX}${collection || 'default'}`;
+
+const loadHistory = (collection) => {
+  try {
+    const raw = localStorage.getItem(historyKey(collection));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    console.warn('[Chat] Failed to load history:', e);
+    return [];
+  }
+};
+
+const saveHistory = (collection, messages) => {
+  try {
+    localStorage.setItem(historyKey(collection), JSON.stringify(messages));
+  } catch (e) {
+    console.warn('[Chat] Failed to save history:', e);
+  }
+};
+
 export const ChatPage = () => {
-  const [messages, setMessages] = useState([]);
+  const [messages, setMessages] = useState(() => loadHistory(null));
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
-  // Use context for collection
-  const { mode, webIngest, llmConfig, currentCollection, setCurrentCollection, treeRagEnabled, setTreeRagEnabled } = useAppContext();
+
+  const {
+    mode, webIngest, llmConfig,
+    currentCollection, setCurrentCollection,
+    treeRagEnabled, setTreeRagEnabled,
+  } = useAppContext();
+
   const [uploadingFiles, setUploadingFiles] = useState([]);
   const messagesEndRef = useRef(null);
+
+  const skipNextSaveRef = useRef(false);
+  const collectionRef = useRef(currentCollection);
+
+  useEffect(() => {
+    if (collectionRef.current === currentCollection) return;
+    collectionRef.current = currentCollection;
+    skipNextSaveRef.current = true;
+    setMessages(loadHistory(currentCollection));
+  }, [currentCollection]);
+
+  useEffect(() => {
+    if (skipNextSaveRef.current) {
+      skipNextSaveRef.current = false;
+      return;
+    }
+    if (messages.length === 0 && !localStorage.getItem(historyKey(collectionRef.current))) {
+      return; 
+    }
+    saveHistory(collectionRef.current, messages);
+  }, [messages]);
+
+  useEffect(() => {
+    if (collectionRef.current !== currentCollection) return;
+    saveHistory(currentCollection, messages);
+  }, [currentCollection]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -27,30 +82,43 @@ export const ChatPage = () => {
     scrollToBottom();
   }, [messages]);
 
+  const handleClearChat = () => {
+    setMessages([]);
+    try {
+      localStorage.removeItem(historyKey(collectionRef.current));
+    } catch (e) {
+      /* ignore */
+    }
+    message.success('Chat cleared');
+  };
+
   const handleSend = async () => {
     if (!input.trim() || streaming) return;
-    
+
     const userMsg = { role: 'user', content: input, id: Date.now() };
-    setMessages(prev => [...prev, userMsg]);
+    const assistantMsgId = Date.now() + 1;
+
+    setMessages(prev => [
+      ...prev,
+      userMsg,
+      { role: 'assistant', content: '', id: assistantMsgId, sources: [] },
+    ]);
     setInput('');
     setStreaming(true);
-
-    const assistantMsgId = Date.now() + 1;
-    setMessages(prev => [...prev, { role: 'assistant', content: '', id: assistantMsgId, sources: [] }]);
 
     try {
       const useWeb = mode === 'web' || mode === 'force_web';
       const forceWeb = mode === 'force_web';
-      
-      const response = await fetch('/chat/stream', { 
+
+      const response = await fetch('/chat/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: input,
           use_web_search: useWeb,
           force_web: forceWeb,
-          ingest_web: webIngest
-        })
+          ingest_web: webIngest,
+        }),
       });
 
       if (!response.body) return;
@@ -65,28 +133,27 @@ export const ChatPage = () => {
 
         const chunk = decoder.decode(value, { stream: true });
         const lines = chunk.split('\n').filter(line => line.trim());
-        
+
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue;
           const dataStr = line.slice(6).trim();
           if (dataStr === '[DONE]') continue;
-          
+
           try {
             const data = JSON.parse(dataStr);
             if (data.chunk) {
               resultText += data.chunk;
-              setMessages(prev => prev.map(msg => 
+              setMessages(prev => prev.map(msg =>
                 msg.id === assistantMsgId ? { ...msg, content: resultText } : msg
               ));
             }
           } catch (e) {
-            // Ignore malformed lines
           }
         }
       }
     } catch (error) {
       message.error('Chat error: ' + error.message);
-      setMessages(prev => prev.map(msg => 
+      setMessages(prev => prev.map(msg =>
         msg.id === assistantMsgId ? { ...msg, content: 'Error: ' + error.message } : msg
       ));
     } finally {
@@ -94,7 +161,7 @@ export const ChatPage = () => {
     }
   };
 
-  const pollUploadProgress = useCallback((uploadId, fileId) => {
+   const pollUploadProgress = useCallback((uploadId, fileId) => {
     console.log('[Upload] Starting progress poll for', uploadId);
     const interval = setInterval(async () => {
       try {
@@ -106,11 +173,11 @@ export const ChatPage = () => {
         }
         const data = await res.json();
         console.log('[Upload] Poll response:', data);
-        
-        setUploadingFiles(prev => prev.map(f => 
+
+        setUploadingFiles(prev => prev.map(f =>
           f.id === fileId ? { ...f, status: data.status, progress: data.progress } : f
         ));
-        
+
         if (data.status === 'completed' || data.status === 'error') {
           clearInterval(interval);
           if (data.status === 'completed') {
@@ -125,7 +192,7 @@ export const ChatPage = () => {
         clearInterval(interval);
       }
     }, 1000);
-    
+
     return () => clearInterval(interval);
   }, []);
 
@@ -133,32 +200,32 @@ export const ChatPage = () => {
     console.log('[Upload] beforeUpload called with', file.name, file.type, file.size);
     const fileId = Date.now() + Math.random();
     const newFile = { id: fileId, name: file.name, status: 'uploading', progress: 0 };
-    
+
     setUploadingFiles(prev => [...prev, newFile]);
-    
+
     const formData = new FormData();
     formData.append('file', file);
     if (currentCollection) {
       formData.append('collection', currentCollection);
     }
-    formData.append('tree_rag', treeRagEnabled ? 'true' : 'false');  
+    formData.append('tree_rag', treeRagEnabled ? 'true' : 'false');
 
     try {
       const response = await fetch('/ingest/file', {
         method: 'POST',
-        body: formData
+        body: formData,
       });
-      
+
       console.log('[Upload] Server responded', response.status, response.statusText);
-      
+
       if (response.ok) {
         const data = await response.json();
         console.log('[Upload] Server JSON:', data);
-        setUploadingFiles(prev => 
+        setUploadingFiles(prev =>
           prev.map(f => f.id === fileId ? { ...f, status: 'processing', progress: 50, uploadId: data.upload_id } : f)
         );
         message.success(`Uploaded ${file.name} for processing`);
-        
+
         if (data.upload_id) {
           pollUploadProgress(data.upload_id, fileId);
         }
@@ -169,7 +236,7 @@ export const ChatPage = () => {
       }
     } catch (error) {
       console.error('[Upload] Fetch failed:', error);
-      setUploadingFiles(prev => 
+      setUploadingFiles(prev =>
         prev.map(f => f.id === fileId ? { ...f, status: 'error', progress: 0 } : f)
       );
       message.error('Upload failed: ' + error.message);
@@ -185,9 +252,9 @@ export const ChatPage = () => {
     <Layout className="chat-layout">
       <Sider width={320} className="chat-sider">
         <Card size="small" title="Collection" className="sider-card">
-          <CollectionSelector 
-            value={currentCollection} 
-            onChange={setCurrentCollection} 
+          <CollectionSelector
+            value={currentCollection}
+            onChange={setCurrentCollection}
           />
         </Card>
 
@@ -202,12 +269,14 @@ export const ChatPage = () => {
             <div className="llm-url">{llmConfig.baseUrl}</div>
           </div>
         </Card>
+
         <Card title="TreeRag" size="small" className="sider-card">
           <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
             <Switch checked={treeRagEnabled} onChange={setTreeRagEnabled} />
             <Text>Enable TreeRAG (hierarchical summarization)</Text>
           </div>
         </Card>
+
         <Card size="small" title="Upload Documents" className="sider-card">
           <Dragger
             beforeUpload={handleFileUpload}
@@ -215,7 +284,6 @@ export const ChatPage = () => {
             multiple={true}
             className="upload-dragger"
           >
-        
             <p className="upload-drag-icon">
               <InboxOutlined />
             </p>
@@ -235,18 +303,18 @@ export const ChatPage = () => {
                     )}
                     {file.status === 'completed' && <Badge status="success" text="Done" />}
                     {file.status === 'error' && <Badge status="error" text="Failed" />}
-                    <Button 
-                      type="text" 
-                      size="small" 
-                      icon={<CloseCircleOutlined />} 
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<CloseCircleOutlined />}
                       onClick={() => removeUploadingFile(file.id)}
                       className="remove-btn"
                     />
                   </div>
                   {(file.status === 'uploading' || file.status === 'processing') && (
-                    <Progress 
-                      percent={file.progress} 
-                      size="small" 
+                    <Progress
+                      percent={file.progress}
+                      size="small"
                       status={file.status === 'processing' ? 'active' : 'normal'}
                       style={{ marginTop: 4 }}
                     />
@@ -257,9 +325,26 @@ export const ChatPage = () => {
           )}
         </Card>
       </Sider>
-      
+
       <Layout>
         <Content className="chat-content">
+          <div className="chat-toolbar">
+            <Text type="secondary" className="chat-toolbar-title">
+              {currentCollection ? `Collection: ${currentCollection}` : 'No collection selected'}
+              {messages.length > 0 && ` · ${messages.filter(m => m.role === 'user').length} message(s)`}
+            </Text>
+            <Tooltip title="Delete the saved conversation for this collection">
+              <Button
+                size="small"
+                icon={<DeleteOutlined />}
+                onClick={handleClearChat}
+                disabled={messages.length === 0 || streaming}
+              >
+                Clear chat
+              </Button>
+            </Tooltip>
+          </div>
+
           <div className="messages-container">
             {messages.length === 0 && (
               <div className="empty-chat">
@@ -269,41 +354,80 @@ export const ChatPage = () => {
                 </Text>
               </div>
             )}
+
             <List
-                dataSource={messages}
-                renderItem={(msg) => {
-                  let displayContent = msg.content;
-                  let sources = msg.sources || [];
+              dataSource={messages}
+              renderItem={(msg) => {
+                let displayContent = msg.content;
+                let sources = msg.sources || [];
 
-                  if (typeof msg.content === 'string' && msg.content.includes('"answer":')) {
-                    try {
-                      const parsed = JSON.parse(msg.content);
-                      displayContent = parsed.answer;
-                      sources = parsed.sources || [];
-                    } catch (e) {  }
-                  }
+                if (typeof msg.content === 'string' && msg.content.includes('"answer":')) {
+                  try {
+                    const parsed = JSON.parse(msg.content);
+                    displayContent = parsed.answer;
+                    sources = parsed.sources || [];
+                  } catch (e) { /* not JSON, ignore */ }
+                }
 
-                  return (
-                    <div className={`message-wrapper ${msg.role}`}>
-                      <div className={`message-bubble ${msg.role}`}>
-                        <div className="text-content" style={{ whiteSpace: 'pre-wrap' }}>{displayContent}</div>
-                        
-                        {sources.length > 0 && (
-                          <div className="sources-container" style={{ marginTop: 10, fontSize: '0.8em', borderTop: '1px solid #eee', paddingTop: 8 }}>
-                            <div style={{ fontWeight: 'bold' }}>Sources:</div>
-                            {sources.map((s, idx) => (
-                              <div key={idx} style={{ color: '#666' }}>• {s.source.split('/').pop()}</div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
+                return (
+                  <div className={`message-wrapper ${msg.role}`}>
+                    <div className={`message-bubble ${msg.role}`}>
+                      {msg.role === 'assistant' ? (
+                        displayContent
+                          ? <MarkdownRenderer content={displayContent} />
+                          : <span className="typing-cursor">▍</span>
+                      ) : (
+                        <div className="text-content" style={{ whiteSpace: 'pre-wrap' }}>
+                          {displayContent}
+                        </div>
+                      )}
+                      {sources.length > 0 && (
+                        <div className="sources-container">
+                          <div className="sources-title">Sources:</div>
+                          {sources.map((s, idx) => {
+                            let rawSource = typeof s === 'string' ? s : (s.source || '');
+
+                      
+                            let sanitizedContent = rawSource;
+
+                            // 1. Remove bullet points like "o " or "◦ " at the start of lines
+                            sanitizedContent = sanitizedContent.replace(/^\s*(?:o|◦|[-•])\s+/gm, '');
+
+                            // 2. Join lines that end with '=' with the next line (handles "y = \n (v - o_y)s_y")
+                            sanitizedContent = sanitizedContent.replace(/([a-zA-Z]\s*=)\s*\n\s*(.*?)\s*(?=\n|$)/g, '$1 $2');
+
+                            // 3. Remove trailing PDF junk like '").' or '")' or '.' at the end of lines
+                            sanitizedContent = sanitizedContent.replace(/["')\s]*\.?\s*$/gm, '');
+
+                            // 4. Wrap standalone equations in $$...$$ if they contain '='
+                            sanitizedContent = sanitizedContent.split('\n').map(line => {
+                              const trimmed = line.trim();
+                              // If line contains '=' and doesn't already start with '$', wrap it in block math
+                              if (trimmed.includes('=') && !trimmed.startsWith('$') && trimmed.length > 3) {
+                                return `$$${trimmed}$$`;
+                              }
+                              return line;
+                            }).join('\n');
+                            printf('Sanitized source content:', sanitizedContent);
+                            return (
+                              <MarkdownRenderer 
+                                key={idx} 
+                                className="source-item" 
+                                content={sanitizedContent} 
+                              />
+                            );
+                          })}
+                        </div>
+                      )}
+
                     </div>
-                  );
-                }}
-              />
+                  </div>
+                );
+              }}
+            />
             <div ref={messagesEndRef} />
           </div>
-          
+
           <div className="input-container">
             <Input.TextArea
               value={input}
@@ -314,13 +438,13 @@ export const ChatPage = () => {
                   handleSend();
                 }
               }}
-              placeholder="Ask a question..."
+              placeholder="Ask a question...  (LaTeX: $x^2$ or $$\int_0^1 x\,dx$$)"
               autoSize={{ minRows: 1, maxRows: 4 }}
               disabled={streaming}
               className="chat-input"
             />
-            <Button 
-              type="primary" 
+            <Button
+              type="primary"
               icon={<SendOutlined />}
               onClick={handleSend}
               loading={streaming}
