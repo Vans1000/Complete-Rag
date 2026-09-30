@@ -152,11 +152,12 @@ Question: {query}"""
 
 
 class RAGChat:
-    def __init__(self, llm: BaseLLM, vector_db, tokenizer, web_search: Optional = None):
+    def __init__(self, llm: BaseLLM, vector_db, tokenizer, web_search: Optional = None, tree_rag: Optional = None):
         self.llm = llm
         self.vector_db = vector_db
         self.tokenizer = tokenizer
         self.web_search = web_search
+        self.tree_rag = tree_rag
         self.chat_history = []
    
     def clear_history(self):
@@ -189,26 +190,69 @@ class RAGChat:
                     context_parts.append(f"### CRITICAL LIVE WEB DATA:\n{web_context}")
                     sources.append({"source": "Live Web Search", "type": "web"})
         
-        results = self.vector_db.Search(
-            tokenizer=self.tokenizer,
-            query_text=query_text,
-            top_k=top_k
-        )
+        if self.tree_rag is not None and not force_web:
+            tree_results = self.tree_rag.query(query_text, top_k=top_k, fanout=max(top_k, 10))
+            flat_results = self.vector_db.Search(
+                tokenizer=self.tokenizer,
+                query_text=query_text,
+                top_k=top_k,
+            )
+
+            seen = {}
+            for r in list(tree_results) + list(flat_results):
+                if r.id not in seen or r.score > seen[r.id].score:
+                    seen[r.id] = r
+            results = sorted(seen.values(), key=lambda x: x.score, reverse=True)[:top_k]
+        else:
+            results = self.vector_db.Search(
+                tokenizer=self.tokenizer,
+                query_text=query_text,
+                top_k=top_k
+            )
+
         
         for i, res in enumerate(results, 1):
+            payload = res.payload
+            is_summary = payload.get('type') == 'summary'
+
             if force_web and res.score < 0.7:
                 continue
-            payload = res.payload
+
             content = payload.get('text', payload.get('caption', ''))
             file_path = payload.get('path', payload.get('source', 'Unknown'))
             page_num = payload.get('page', 'N/A')
-            source_identifier = f"{file_path}: Page {page_num}"
+
+            if is_summary:
+                source_identifier = f"{file_path} (TreeRAG summary, level {payload.get('level', '?')})"
+            else:
+                chunk_idx = payload.get('chunk_idx', '?')
+                source_identifier = f"{file_path} | page {page_num} | chunk {chunk_idx}"
+
             context_parts.append(f"{i}. SOURCE LINK: {source_identifier}\nCONTENT: {content}")
             sources.append({
                 "source": source_identifier,
                 "score": res.score,
-                "type": payload.get('type', 'text')
+                "type": payload.get('type', 'text'),
             })
+        seen_adjacent = set()
+        for res in results:
+            payload = res.payload
+            if payload.get('type') == 'summary':
+                continue
+            path = payload.get('path', '')
+            cidx = payload.get('chunk_idx')
+            if cidx is None or not path:
+                continue
+            for nb in self.vector_db.fetch_adjacent(path, cidx, radius=1):
+                if nb.id in seen_adjacent:
+                    continue
+                seen_adjacent.add(nb.id)
+                context_parts.append(
+                    f"[CONTEXT — adjacent to retrieved chunk]\n"
+                    f"SOURCE LINK: {path} | Section {nb.payload.get('section', '?')} "
+                    f"| Page {nb.payload.get('page', 'N/A')}\n"
+                    f"CONTENT: {nb.payload.get('text', '')}"
+                )
         
         if use_web_search and not force_web and self.web_search:
             if ingest_web:

@@ -111,10 +111,10 @@ class File:
         full_text = doc.export_to_markdown()
 
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=3000,
-            chunk_overlap=500,
+            chunk_size=1200,
+            chunk_overlap=350,
             length_function=len,
-            separators=["\n\n\n", "\n\n", "\n", " ", ""]
+            separators=["\n\n\n", "\n\n", "\n", " ", "", "."]
         )
 
         page_texts = {}

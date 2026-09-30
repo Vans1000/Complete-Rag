@@ -229,14 +229,31 @@ if __name__ == "__main__":
     if args.web_search or args.use_web or args.ingest_web or args.api:
         web_search = WebSearch(tokenizer, vector_db, max_results=args.web_results)
     
-    rag_chat = None
-    if (args.chat or args.ask) and not args.api:
+    llm = None
+    if args.chat or args.ask or args.tree_rag:
         if args.llm_provider == "openai":
             llm = OpenAILLM(model=args.llm_model, base_url=args.llm_base_url)
         else:
             llm = OllamaLLM(model=args.llm_model, base_url=args.llm_base_url or "http://localhost:11434")
-
-        rag_chat = RAGChat(llm=llm, vector_db=vector_db, tokenizer=tokenizer, web_search=web_search)
+    
+    tree_rag_engine = None
+    if args.tree_rag:
+        if llm is None:
+            raise ValueError("TreeRAG requires an LLM.")
+        tree_rag_engine = TreeRAG(tokenizer=tokenizer, vector_db=vector_db, llm=llm)
+    
+    
+    rag_chat = None
+    if (args.chat or args.ask) and not args.api:
+        rag_chat = RAGChat(
+            llm=llm,
+            vector_db=vector_db,
+            tokenizer=tokenizer,
+            web_search=web_search,
+            tree_rag=tree_rag_engine,       
+        )
+    
+    
     if args.web_search:
         web_search_mode(web_search, args.web_search, args.ingest_web)
         if not args.chat and not args.ask: 
@@ -248,19 +265,7 @@ if __name__ == "__main__":
         api.start_api_server(tokenizer, vector_db, web_search, args.api_host, args.api_port)
         sys.exit(0)
     
-    llm = None
-    if args.chat or args.ask or args.tree_rag:
-        if args.llm_provider == "openai":
-            llm = OpenAILLM(model=args.llm_model, base_url=args.llm_base_url)
-        else:
-            llm = OllamaLLM(model=args.llm_model, base_url=args.llm_base_url or "http://localhost:11434")
-    
-    if args.tree_rag:
-        if llm is None:
-            raise ValueError("TreeRAG requires an LLM. Please configure --llm_provider and --llm_model.")
-        tree_rag_engine = TreeRAG(tokenizer=tokenizer, vector_db=vector_db, llm=llm)
-    else:
-        tree_rag_engine = None
+
     if args.documents is not None:
         document_paths = args.documents
         for file_path in document_paths:

@@ -74,6 +74,33 @@ export const ChatPage = () => {
     saveHistory(currentCollection, messages);
   }, [currentCollection]);
 
+  const skipFirstSyncRef = useRef(true);
+
+  useEffect(() => {
+    if (skipFirstSyncRef.current) {
+      skipFirstSyncRef.current = false;
+      fetch('/config/tree_rag')
+        .then(r => r.json())
+        .then(data => {
+          if (typeof data.enabled === 'boolean' && data.enabled !== treeRagEnabled) {
+            setTreeRagEnabled(data.enabled);
+          }
+        })
+        .catch(() => { });
+      return;
+    }
+
+    fetch('/config/tree_rag', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: !!treeRagEnabled }),
+    })
+      .then(r => r.ok ? null : r.json().then(e =>
+        message.warning(e.detail || 'Failed to toggle TreeRAG on the server')
+      ))
+      .catch(e => console.warn('[TreeRAG] Sync failed:', e));
+  }, [treeRagEnabled]);
+  
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
@@ -185,6 +212,11 @@ export const ChatPage = () => {
             setTimeout(() => {
               setUploadingFiles(prev => prev.filter(f => f.id !== fileId));
             }, 3000);
+          } else {
+            message.error(`Ingestion failed: ${data.message || 'unknown error'}`);
+            setUploadingFiles(prev =>
+              prev.map(f => f.id === fileId ? { ...f, status: 'error' } : f)
+            );
           }
         }
       } catch (e) {
@@ -208,8 +240,7 @@ export const ChatPage = () => {
     if (currentCollection) {
       formData.append('collection', currentCollection);
     }
-    formData.append('tree_rag', treeRagEnabled ? 'true' : 'false');
-
+    formData.append('tree_rag_enabled', treeRagEnabled ? 'true' : 'false');
     try {
       const response = await fetch('/ingest/file', {
         method: 'POST',

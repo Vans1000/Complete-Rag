@@ -30,6 +30,7 @@ app_state = {
     "vector_db": None,
     "web_search": None,
     "rag_chat": None,
+    "tree_rag": None,
     "tree_rag_enabled": None
 }
 
@@ -199,12 +200,46 @@ async def get_active_collection():
 
 @app.get("/config/tree_rag")
 async def get_tree_rag():
-    return {"enabled": app_state.get("tree_rag_enabled", False)}
+    engine = app_state.get("tree_rag")
+    return {
+        "enabled": app_state.get("tree_rag_enabled", False),
+        "built":   engine is not None and engine.max_level >= 0,
+        "max_level": engine.max_level if engine is not None else -1,
+    }
+
 
 @app.post("/config/tree_rag")
 async def set_tree_rag(data: dict):
-    app_state["tree_rag_enabled"] = data.get("enabled", False)
-    return {"status": "ok"}
+    enabled = bool(data.get("enabled", False))
+
+    if enabled:
+        rag_chat = app_state.get("rag_chat")
+        if rag_chat is None or getattr(rag_chat, "llm", None) is None:
+            raise HTTPException(
+                status_code=400,
+                detail="TreeRAG requires an LLM. Configure one via /config/llm first.",
+            )
+
+        engine = app_state.get("tree_rag")
+        if engine is None:
+            engine = TreeRAG(
+                tokenizer=app_state["tokenizer"],
+                vector_db=app_state["vector_db"],
+                llm=rag_chat.llm,
+            )
+            app_state["tree_rag"] = engine
+        else:
+            engine.tokenizer = app_state["tokenizer"]
+            engine.vector_db = app_state["vector_db"]
+            engine.llm = rag_chat.llm
+
+        rag_chat.tree_rag = engine
+    else:
+        if app_state.get("rag_chat") is not None:
+            app_state["rag_chat"].tree_rag = None
+
+    app_state["tree_rag_enabled"] = enabled
+    return {"status": "ok", "enabled": enabled}
 
 @app.post("/config/llm")
 async def configure_llm(config: LLMConfig):
@@ -238,8 +273,10 @@ async def configure_llm(config: LLMConfig):
             vector_db=app_state["vector_db"],
             tokenizer=app_state["tokenizer"],
             web_search=app_state["web_search"],
+            tree_rag=app_state["tree_rag"] if app_state["tree_rag_enabled"] else None,
         )
-
+        if app_state.get("tree_rag") is not None:
+            app_state["tree_rag"].llm = llm
         return {
             "status": "success",
             "provider": prov,
@@ -395,11 +432,15 @@ async def configure_websearch(config: WebSearchConfig):
 async def query(request: QueryRequest):
     """Search vector database without LLM generation"""
     try:
-        results = app_state["vector_db"].Search(
-            tokenizer=app_state["tokenizer"],
-            query_text=request.query,
-            top_k=request.top_k
-        )
+        engine = app_state.get("tree_rag")
+        if app_state.get("tree_rag_enabled") and engine is not None and engine.max_level >= 0:
+            results = engine.query(request.query, top_k=request.top_k)
+        else:
+            results = app_state["vector_db"].Search(
+                tokenizer=app_state["tokenizer"],
+                query_text=request.query,
+                top_k=request.top_k,
+            )
         
         formatted_results = []
         for res in results:
@@ -525,17 +566,21 @@ async def ingest_file(
             try:
                 tree_rag_engine = None
                 if use_tree_rag:
-                    tree_rag_engine = TreeRAG(
-                        tokenizer=app_state["tokenizer"],
-                        vector_db=app_state["vector_db"],
-                        llm=app_state["rag_chat"].llm
-                    )
+                    engine = app_state.get("tree_rag")
+                    if engine is None:
+                        engine = TreeRAG(
+                            tokenizer=app_state["tokenizer"],
+                            vector_db=app_state["vector_db"],
+                            llm=app_state["rag_chat"].llm,
+                        )
+                        app_state["tree_rag"] = engine
+                    tree_rag_engine = engine
 
                 DocumentProcessor.ProcessDocuments(
-                    file_path, 
-                    app_state["tokenizer"], 
+                    file_path,
+                    app_state["tokenizer"],
                     app_state["vector_db"],
-                    tree_rag_engine=tree_rag_engine
+                    tree_rag_engine=tree_rag_engine,
                 )
                 
                 upload_progress[upload_id]["status"] = "completed"
@@ -717,6 +762,9 @@ async def switch_collection(request: SwitchRequest):
         app_state["vector_db"] = VectorDatabase(collection_name=request.collection_name)
         if app_state["rag_chat"]:
             app_state["rag_chat"].vector_db = app_state["vector_db"]
+        if app_state.get("tree_rag") is not None:
+            app_state["tree_rag"].vector_db = app_state["vector_db"]
+            app_state["tree_rag"].max_level = -1     
         return {"status": "switched", "collection": request.collection_name}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

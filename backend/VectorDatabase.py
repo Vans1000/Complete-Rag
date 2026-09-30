@@ -3,7 +3,7 @@ from qdrant_client import QdrantClient, models
 from qdrant_client.models import VectorParams, Distance, SparseVectorParams, PointStruct, SparseVector
 from pathlib import Path
 import math
-
+from typing import List, Optional
 
 class VectorDatabase:
     def __init__(self, host="localhost", port=6333, collection_name="documents", use_grpc=False, grpc_port=6334):
@@ -69,9 +69,22 @@ class VectorDatabase:
             ]
         )
 
-    def Search(self, tokenizer, query_text=None, query_image=None, top_k=20, tree_level: int = None):
+    def Search(self, tokenizer, query_text=None, query_image=None, top_k=20, tree_level: int = None, node_ids: Optional[List[str]] = None):
         results = []
         query_filter = None
+        
+        must_clauses = []
+        if tree_level is not None:
+            must_clauses.append(models.FieldCondition(
+                key="level",
+                match=models.MatchValue(value=tree_level),
+            ))
+        if node_ids:
+            must_clauses.append(models.HasIdCondition(has_id=list(node_ids)))
+
+        if must_clauses:
+            query_filter = models.Filter(must=must_clauses)
+            
         if tree_level is not None:
             query_filter = models.Filter(
                 must=[models.FieldCondition(key="level", match=models.MatchValue(value=tree_level))]
@@ -178,3 +191,23 @@ class VectorDatabase:
 
         unique_results.sort(key=lambda x: x.score, reverse=True)
         return unique_results[:top_k]
+    
+    def fetch_adjacent(self, path: str, chunk_idx: int, radius: int = 1):
+        """Fetch chunks with chunk_idx in [chunk_idx-radius, chunk_idx+radius] for the same path."""
+        if chunk_idx is None or not path:
+            return []
+        lo, hi = chunk_idx - radius, chunk_idx + radius
+        results = self.client.scroll(
+            collection_name=self.collection_name,
+            scroll_filter=models.Filter(
+                must=[
+                    models.FieldCondition(key="path", match=models.MatchValue(value=path)),
+                    models.FieldCondition(key="chunk_idx", range=models.Range(gte=lo, lte=hi)),
+                    models.FieldCondition(key="type", match=models.MatchValue(value="text")),
+                ]
+            ),
+            limit=(2 * radius + 1) * 2,
+            with_payload=True,
+            with_vectors=False,
+        )[0]
+        return [p for p in results if p.payload.get("chunk_idx") != chunk_idx]
