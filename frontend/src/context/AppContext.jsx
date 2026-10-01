@@ -2,10 +2,21 @@ import { createContext, useContext, useState, useEffect } from 'react';
 
 const AppContext = createContext();
 
+const COLLECTION_STORAGE_KEY = 'current_collection';
+
 export const AppProvider = ({ children }) => {
   const [mode, setMode] = useState('local');
   const [webIngest, setWebIngest] = useState(false);
-  const [currentCollection, setCurrentCollection] = useState(null); 
+
+  // Lazy init from localStorage (null if not set)
+  const [currentCollection, setCurrentCollection] = useState(() => {
+    try {
+      return localStorage.getItem(COLLECTION_STORAGE_KEY) || null;
+    } catch {
+      return null;
+    }
+  });
+
   const [treeRagEnabled, setTreeRagEnabled] = useState(false);
 
   const [llmConfig, setLlmConfig] = useState(() => {
@@ -30,13 +41,28 @@ export const AppProvider = ({ children }) => {
     };
   });
 
+  // Persist LLM config
   useEffect(() => {
     localStorage.setItem('llm_config', JSON.stringify(llmConfig));
   }, [llmConfig]);
 
+  // Persist tokenizer config
   useEffect(() => {
     localStorage.setItem('tokenizer_config', JSON.stringify(tokenizerConfig));
   }, [tokenizerConfig]);
+
+  // Persist selected collection
+  useEffect(() => {
+    try {
+      if (currentCollection) {
+        localStorage.setItem(COLLECTION_STORAGE_KEY, currentCollection);
+      } else {
+        localStorage.removeItem(COLLECTION_STORAGE_KEY);
+      }
+    } catch (e) {
+      console.warn('[AppContext] Failed to persist collection:', e);
+    }
+  }, [currentCollection]);
 
   const updateLlmConfig = (newConfig) => {
     setLlmConfig(prev => ({ ...prev, ...newConfig }));
