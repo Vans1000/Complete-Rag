@@ -16,6 +16,7 @@ All retrieval and reranking models run locally through Hugging Face `transformer
 - [REST API Reference](#rest-api-reference)
 - [Project Structure](#project-structure)
 - [Configuration](#configuration)
+- [Benchmarks](#Benchmarks)
 - [License](#license)
 - [References](#references)
 
@@ -283,6 +284,81 @@ Advanced RAG with GUI/
 - **LLM provider**: set via `--llm_provider`/`--llm_model` on the CLI, `POST /config/llm`, or the GUI's LLM dialog. `openai` mode accepts any OpenAI-compatible `base_url` (OpenAI itself, LM Studio, vLLM, etc.); `ollama` mode talks to a local Ollama server.
 - **Embedding/reranking/captioning models**: set via CLI flags, `POST /config/tokenizer`, or the GUI's "Embedding & Caption Models" dialog. Changing these reloads the corresponding models into memory; previously indexed vectors in Qdrant are unaffected.
 - **Collections**: multiple Qdrant collections can be created and switched between without restarting the backend.
+# Benchmarks
+## What gets measured?
+
+| Script | Question it answers | Data |
+|---|---|---|
+| `bench_retrieval.py` | How good is each retrieval stage, and what does each one cost? | BEIR (SciFact by default; also NFCorpus, FiQA, ArguAna, SciDocs, TREC-COVID ...) |
+| `bench_e2e.py` | Does the full pipeline produce correct answers, and how fast? | SQuAD v1.1 validation, or your own JSONL QA set |
+| `test_metrics.py` | Are the metric implementations correct? | built-in cases |
+
+**Retrieval ablation modes** (each one is a stage of `VectorDatabase.Search`):
+
+- `dense`: CLIP `text_dense` only
+- `sparse`: SPLADE-v3 `text_sparse` only
+- `hybrid`: dense + sparse with Qdrant RRF, no reranking
+- `full`: `VectorDatabase.Search()` exactly as the app calls it (RRF + cross-encoder rerank)
+
+Metrics: nDCG@10 (the standard BEIR headline number), MRR@10, P@5, Recall@5/10/k, p50/p95 latency, QPS,
+plus ingestion throughput (chunks/s, split into embedding vs Qdrant upload time).
+
+**End-to-end metrics:**
+- `gold_hit@1`, `gold_hit@k`: was the gold passage retrieved?
+- `answer_in_context`: does the context sent to the LLM contain the answer?
+- `answer_contains`: does the LLM's response contain a gold answer? (the main accuracy number for verbose generative answers)
+- `llm_judge_acc`: with `--judge`
+- `token_f1` / `exact_match`: shown for reference; they're low by design because the system prompt asks for long, cited answers
+- `abstention_rate`: same failure phrases `RAGChat._evaluate_answer` uses
+- Latency split into retrieval / generation / total
+
+## Setup
+
+```bash
+docker run -p 6333:6333 qdrant/qdrant          # if not already running
+cd backend && source .venv/bin/activate         # the project's env already has every dependency
+cd ..
+python benchmark/test_metrics.py                # quick sanity check
+```
+
+## Run
+
+```bash
+# Retrieval, ~5k docs / 300 queries, takes a few minutes on a GPU
+python benchmark/bench_retrieval.py --dataset scifact
+
+# A harder, larger set
+python benchmark/bench_retrieval.py --dataset fiqa --max_queries 300
+
+# Rerank depth sweep (the app uses top_k 5-10; deeper = better recall but slower cross-encoder)
+for k in 10 20 50; do python benchmark/bench_retrieval.py --dataset scifact --modes full --top_k $k; done
+
+# End-to-end with OpenAI
+OPENAI_API_KEY=... python benchmark/bench_e2e.py --llm_provider openai --llm_model gpt-4o-mini --n 200 --judge
+
+# End-to-end with Ollama or LM Studio
+python benchmark/bench_e2e.py --llm_provider ollama --llm_model llama3.1 --n 100
+python benchmark/bench_e2e.py --llm_provider openai --llm_base_url http://localhost:1234/v1 --llm_model google/gemma-4-31b
+
+# Your own documents: ingest with main.py as usual, then
+python benchmark/bench_e2e.py --qa_file my_qa.jsonl --collection my_collection ...
+#   my_qa.jsonl lines: {"question": "...", "answers": ["..."], "gold_doc": "<file name or source_id, optional>"}
+```
+
+Every run writes `benchmark/results/*.json` (full report), `*.md` (table), and `*_per_query.jsonl`
+(for digging into failures). Corpora go into separate `bench_*` collections and are only ingested
+once; pass `--reingest` after changing chunking or embedding models.
+
+Useful flags:
+- `--load_vision`: also loads the 1B vision reranker. It's off by default because text-only corpora never call it.
+- `--dense_model`, `--sparse_model`, `--cross_encoder_model`: compare swapped-in models. Use a new `--collection` when you change the embedding models.
+- `--temperature`: generation runs at 0 for reproducibility; the app's default is 0.7.
+
+## Reference points
+
+For context on SciFact nDCG@10, published BEIR results put BM25 at about 0.67, and strong dense or SPLADE
+models land around 0.65–0.72. Use those as a rough scale, not exact targets: the chunking here
+(3000/500 characters) and the RRF settings differ from the published setups.
 
 ## How was AI used for this project?
 Most of the code for this project was written by hand. However, AI was used in researcg, debugging and generating the readme (especially for finding citations). 
