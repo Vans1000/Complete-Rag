@@ -85,10 +85,6 @@ class VectorDatabase:
         if must_clauses:
             query_filter = models.Filter(must=must_clauses)
             
-        if tree_level is not None:
-            query_filter = models.Filter(
-                must=[models.FieldCondition(key="level", match=models.MatchValue(value=tree_level))]
-            )
         if query_text:
             query_dense = tokenizer.DenseVectorRetrieval(textList=[query_text])[1]
             query_sparse = tokenizer.SparseTokens(query_text)
