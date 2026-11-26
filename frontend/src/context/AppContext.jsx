@@ -8,7 +8,6 @@ export const AppProvider = ({ children }) => {
   const [mode, setMode] = useState('local');
   const [webIngest, setWebIngest] = useState(false);
 
-  // Lazy init from localStorage (null if not set)
   const [currentCollection, setCurrentCollection] = useState(() => {
     try {
       return localStorage.getItem(COLLECTION_STORAGE_KEY) || null;
@@ -36,23 +35,20 @@ export const AppProvider = ({ children }) => {
       denseModel: 'clip-ViT-B-32',
       textDenseModel: 'BAAI/bge-small-en-v1.5',
       sparseModel: 'naver/splade-v3',
-      crossEncoderModel: 'cross-encoder/ms-marco-MiniLM-L-12-v2',
+      crossEncoderModel: 'Alibaba-NLP/gte-reranker-modernbert-base',
       visionRerankModel: 'nvidia/llama-nemotron-rerank-vl-1b-v2',
       captionModel: 'vikhyatk/moondream2'
     };
   });
 
-  // Persist LLM config
   useEffect(() => {
     localStorage.setItem('llm_config', JSON.stringify(llmConfig));
   }, [llmConfig]);
 
-  // Persist tokenizer config
   useEffect(() => {
     localStorage.setItem('tokenizer_config', JSON.stringify(tokenizerConfig));
   }, [tokenizerConfig]);
 
-  // Persist selected collection
   useEffect(() => {
     try {
       if (currentCollection) {

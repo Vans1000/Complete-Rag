@@ -238,7 +238,7 @@ class VectorDatabase:
             if candidates_text:
                 cross_encoder_scores = tokenizer.CrossEncoderRanking(query_text, candidates_text)
                 for i, score in enumerate(cross_encoder_scores):
-                    unique_results[i].score += VectorDatabase.sigmoid(score) * 2.0
+                    unique_results[i].score = float(score) + 1e-3 * unique_results[i].score
 
         unique_results.sort(key=lambda x: x.score, reverse=True)
         return unique_results[:top_k]

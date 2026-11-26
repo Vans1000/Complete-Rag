@@ -16,7 +16,7 @@ os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 DEFAULTS = {
     "dense_model": "clip-ViT-B-32",
     "sparse_model": "naver/splade-v3",
-    "cross_encoder_model": "cross-encoder/ms-marco-MiniLM-L-12-v2",
+    "cross_encoder_model": "Alibaba-NLP/gte-reranker-modernbert-base",
     "vision_rerank_model": "nvidia/llama-nemotron-rerank-vl-1b-v2",
 }
 

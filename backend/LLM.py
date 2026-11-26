@@ -67,7 +67,13 @@ Use the provided context to answer the user's question. If the context doesn't c
             return (chunk.choices[0].delta.content or "" for chunk in response 
                     if chunk.choices[0].delta.content)
         else:
-            return response.choices[0].message.content
+            choice = response.choices[0]
+            content = choice.message.content
+            if not content:
+                reasoning = getattr(choice.message, "reasoning_content", None) or getattr(choice.message, "reasoning", None)
+                print(f"[LLM] Warning: empty response from {self.model} "
+                      f"(finish_reason={choice.finish_reason}{', reasoning-only output' if reasoning else ''})")
+            return content or ""
     
     def generate_with_context(self, query: str, context: str, stream: bool = False, 
                              chat_history: Optional[List[Dict]] = None, force_web: bool = False) -> Union[str, Generator]:

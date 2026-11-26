@@ -114,7 +114,7 @@ class TokenizerConfig(BaseModel):
     dense_model: str = "clip-ViT-B-32"
     text_dense_model: str = TEXT_DENSE_MODEL
     sparse_model: str = "naver/splade-v3"
-    cross_encoder_model: str = "cross-encoder/ms-marco-MiniLM-L-12-v2"
+    cross_encoder_model: str = "Alibaba-NLP/gte-reranker-modernbert-base"
     vision_rerank_model: str = "nvidia/llama-nemotron-rerank-vl-1b-v2"
     caption_model: str = "None"
 

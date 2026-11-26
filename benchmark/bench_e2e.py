@@ -121,6 +121,11 @@ def main():
 
     rag = RAGChat(llm=llm, vector_db=vdb, tokenizer=tok)
 
+    out = Path(args.out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    base = out / f"e2e_{tag}_{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    rows_file = open(f"{base}_per_question.jsonl", "w")
+
     rows = []
     for i, q in enumerate(questions, 1):
         probe.clear()
@@ -129,9 +134,10 @@ def main():
         try:
             result, sources, context = rag._retrieve_and_generate(
                 q["question"], q["question"], False, False, args.top_k, False, False)
-            answer = result.get("answer", "") if isinstance(result, dict) else str(result)
+            answer = result.get("answer", "") if isinstance(result, dict) else result
+            answer = answer if isinstance(answer, str) else ("" if answer is None else str(answer))
             err = None
-        except Exception as e:  # keep going; count as failure
+        except Exception as e:  
             answer, context, err = "", "", repr(e)
         total_s = time.perf_counter() - t0
 
@@ -149,6 +155,7 @@ def main():
             "f1": token_f1(answer, q["answers"]),
             "em": exact_match(answer, q["answers"]),
             "abstained": float(any(s in answer.lower() for s in ABSTAIN)),
+            "empty": float(err is None and not answer.strip()),
             "search_s": probe.get("search_s", float("nan")),
             "gen_s": probe.get("gen_s", float("nan")),
             "total_s": total_s,
@@ -158,6 +165,8 @@ def main():
                 q=q["question"], gold=" | ".join(q["answers"]), resp=answer[:6000])}], stream=False)
             row["judge"] = float(normalize_answer(str(verdict)).startswith("correct"))
         rows.append(row)
+        rows_file.write(json.dumps(row) + "\n")
+        rows_file.flush()
         if i % 10 == 0 or i == len(questions):
             print(f"  {i}/{len(questions)}  contains={mean([r['contains'] for r in rows]):.3f}  "
                   f"ctx_has_answer={mean([r['answer_in_context'] for r in rows]):.3f}  "
@@ -175,12 +184,21 @@ def main():
         "gold_hit@1": m("gold_hit@1", searched), f"gold_hit@{args.top_k}": m("gold_hit@k", searched),
         "answer_in_context": m("answer_in_context"),
         "answer_contains": m("contains"), "token_f1": m("f1"), "exact_match": m("em"),
-        "abstention_rate": m("abstained"), "llm_judge_acc": m("judge") if judge else None,
+        "abstention_rate": m("abstained"), "empty_response_rate": m("empty"),
+        "llm_judge_acc": m("judge") if judge else None,
         "avg_context_chars": m("context_chars"),
         "latency_retrieval": latency_summary([r["search_s"] for r in searched]),
         "latency_generation": latency_summary([r["gen_s"] for r in ok]),
         "latency_total": latency_summary([r["total_s"] for r in ok]),
     }
+
+    rows_file.close()
+    base.with_suffix(".json").write_text(json.dumps({
+        "dataset": tag, "collection": collection, "top_k": args.top_k,
+        "text_dense_model": args.text_dense_model, "chunk_size": args.chunk_size,
+        "rerank_multiplier": args.rerank_multiplier,
+        "llm": {"provider": args.llm_provider, "model": args.llm_model, "temperature": args.temperature},
+        "env": device_info(), "ingestion": ingest_stats, "summary": summary}, indent=2))
 
     def fmt(v):
         return "n/a" if v is None else f"{v:.4f}"
@@ -190,8 +208,8 @@ def main():
           f"Device: {device_info().get('device', '?')}", "",
           "| metric | value |", "|---|---|"]
     for k in ["gold_hit@1", f"gold_hit@{args.top_k}", "answer_in_context", "answer_contains",
-              "llm_judge_acc", "token_f1", "exact_match", "abstention_rate"]:
-        md.append(f"| {k} | {fmt(summary[k])} |")
+              "llm_judge_acc", "token_f1", "exact_match", "abstention_rate", "empty_response_rate"]:
+        md.append(f"| {k} | {fmt(summary.get(k))} |")
     md += ["", "| stage | mean ms | p50 ms | p95 ms |", "|---|---|---|---|"]
     for stage in ["retrieval", "generation", "total"]:
         s = summary[f"latency_{stage}"]
@@ -199,19 +217,7 @@ def main():
     md_text = "\n".join(md)
     print("\n" + md_text + "\n")
 
-    out = Path(args.out_dir)
-    out.mkdir(parents=True, exist_ok=True)
-    base = out / f"e2e_{tag}_{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-    base.with_suffix(".json").write_text(json.dumps({
-        "dataset": tag, "collection": collection, "top_k": args.top_k,
-        "text_dense_model": args.text_dense_model, "chunk_size": args.chunk_size,
-        "rerank_multiplier": args.rerank_multiplier,
-        "llm": {"provider": args.llm_provider, "model": args.llm_model, "temperature": args.temperature},
-        "env": device_info(), "ingestion": ingest_stats, "summary": summary}, indent=2))
     base.with_suffix(".md").write_text(md_text + "\n")
-    with open(f"{base}_per_question.jsonl", "w") as f:
-        for r in rows:
-            f.write(json.dumps(r) + "\n")
     print(f"Saved {base}.json / .md / _per_question.jsonl")
 
 

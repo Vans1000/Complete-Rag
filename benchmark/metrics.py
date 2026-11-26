@@ -1,16 +1,8 @@
-"""Pure-Python IR / QA metrics. No third-party deps so they can be unit-tested anywhere."""
 import math
 import re
 import string
 from collections import Counter
 from typing import Dict, Iterable, List, Sequence
-
-
-# --------------------------------------------------------------------------- #
-# Retrieval metrics
-#   ranked: ordered list of doc ids returned by the system (deduplicated)
-#   qrels:  {doc_id: graded relevance}; relevance > 0 counts as relevant
-# --------------------------------------------------------------------------- #
 
 def dcg(gains: Sequence[float]) -> float:
     return sum((2 ** g - 1) / math.log2(i + 2) for i, g in enumerate(gains))
@@ -22,7 +14,9 @@ def ndcg_at_k(ranked: List[str], qrels: Dict[str, int], k: int) -> float:
     idcg = dcg(ideal)
     return dcg(gains) / idcg if idcg > 0 else 0.0
 
-
+def normalize_answer(s: str) -> str:
+    s = (s or "").lower()
+    
 def recall_at_k(ranked: List[str], qrels: Dict[str, int], k: int) -> float:
     relevant = {d for d, r in qrels.items() if r > 0}
     if not relevant:
@@ -92,10 +86,6 @@ def answer_contains(pred: str, golds: List[str]) -> float:
     p = f" {normalize_answer(pred)} "
     return float(any(f" {normalize_answer(g)} " in p for g in golds if normalize_answer(g)))
 
-
-# --------------------------------------------------------------------------- #
-# Latency
-# --------------------------------------------------------------------------- #
 
 def percentile(values: List[float], pct: float) -> float:
     if not values:

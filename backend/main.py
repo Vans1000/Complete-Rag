@@ -163,7 +163,7 @@ if __name__ == "__main__":
     parser.add_argument("--text_dense_model", type=str, default=TEXT_DENSE_MODEL, help="Dense embedder for text chunks ('None' = SPLADE-only text retrieval). Changing it needs a new collection.")
     parser.add_argument("--rerank_multiplier", type=int, default=RERANK_MULTIPLIER, help="Search fetches top_k * this many candidates per source before cross-encoder reranking.")
     parser.add_argument("--sparse_model", type=str, default="naver/splade-v3", help="Name of the sparse model to use.")
-    parser.add_argument("--cross_encoder_model", type=str, default="cross-encoder/ms-marco-MiniLM-L-12-v2", help="Name of the cross-encoder model to use.")
+    parser.add_argument("--cross_encoder_model", type=str, default="Alibaba-NLP/gte-reranker-modernbert-base", help="Name of the cross-encoder model to use.")
     parser.add_argument("--vision_rerank_model", type=str, default="nvidia/llama-nemotron-rerank-vl-1b-v2", help="Name of the vision rerank model to use.")
     parser.add_argument("--caption_model", type=str, default="vikhyatk/moondream2", help="Name of the caption model to use (or use None for speed).")
     parser.add_argument("--query", type=str, default=None, help="Query for retrieval.")
