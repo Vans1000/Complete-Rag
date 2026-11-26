@@ -6,13 +6,31 @@ import os
 import warnings
 from transformers import logging
 import numpy as np
-from rag_config import TEXT_DENSE_MODEL, query_prefix_for
+from rag_config import (TEXT_DENSE_MODEL, CROSS_ENCODER_DEVICE, CROSS_ENCODER_BATCH_SIZE,
+                        PAD_TO_MULTIPLE_OF, query_prefix_for)
 
 os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 os.environ["DISABLE_TRANSFORMERS_AUTOCONVERSION"] = "1" 
 warnings.filterwarnings("ignore")
 logging.set_verbosity_error()
+
+
+def bucket_padding(tokenizer, multiple):
+    if tokenizer is None or not multiple:
+        return tokenizer
+    cls = type(tokenizer)
+    if getattr(cls, "_bucketed_padding", False):
+        return tokenizer
+
+    def __call__(self, *args, **kwargs):
+        if kwargs.get("padding") and kwargs.get("pad_to_multiple_of") is None:
+            kwargs["pad_to_multiple_of"] = multiple
+        return cls.__call__(self, *args, **kwargs)
+
+    tokenizer.__class__ = type(cls.__name__, (cls,), {"__call__": __call__, "_bucketed_padding": True})
+    return tokenizer
+
 
 class Tokenizer:
     def __init__(self, dense_model="clip-ViT-B-32", sparse_model="naver/splade-v3", cross_encoder_model="cross-encoder/ms-marco-MiniLM-L-12-v2", vision_rerank_model="nvidia/llama-nemotron-rerank-vl-1b-v2", caption_model="None", text_dense_model=TEXT_DENSE_MODEL):
@@ -33,7 +51,10 @@ class Tokenizer:
         self._load_text_dense(text_dense_model)
         self.sparse_tokenizer = AutoTokenizer.from_pretrained(sparse_model, use_fast=True)
         self.sparse_model = AutoModelForMaskedLM.from_pretrained(sparse_model).to(self.device)
-        self.cross_encoder_model = CrossEncoder(cross_encoder_model)
+        self.cross_encoder_model = CrossEncoder(cross_encoder_model, device=CROSS_ENCODER_DEVICE)
+        self._bucket(self.sparse_tokenizer)
+        self._bucket(getattr(self.cross_encoder_model, "tokenizer", None),
+                     on_device=getattr(self.cross_encoder_model, "device", self.device))
         if vision_rerank_model and vision_rerank_model != "None":
             processor_kwargs = {
                 "trust_remote_code": True,
@@ -119,11 +140,23 @@ class Tokenizer:
             self.caption_model_type = None
         self.i = 0
 
+    def _bucket(self, tokenizer, on_device=None):
+        device = on_device if on_device is not None else self.device
+        if str(getattr(device, "type", device)) == "mps":
+            bucket_padding(tokenizer, PAD_TO_MULTIPLE_OF)
+
+    def _release_device_memory(self):
+        if self.device.type == "mps":
+            torch.mps.empty_cache()
+        elif self.device.type == "cuda":
+            torch.cuda.empty_cache()
+
     def _load_text_dense(self, model_name):
         if model_name and str(model_name) != "None":
             self.text_dense_model_name = model_name
             self.text_dense_model = SentenceTransformer(model_name).to(self.device).eval()
             self.text_dense_dim = self.text_dense_model.get_sentence_embedding_dimension()
+            self._bucket(getattr(self.text_dense_model, "tokenizer", None))
             self.text_query_prefix, self.text_doc_prefix = query_prefix_for(model_name)
         else:
             self.text_dense_model_name = "None"
@@ -146,13 +179,11 @@ class Tokenizer:
             )
         out = emb.cpu()
         del emb
-        if self.device.type == "mps":
-            torch.mps.empty_cache()
-        elif self.device.type == "cuda":
-            torch.cuda.empty_cache()
+        self._release_device_memory()
         return out
 
     def TextDenseVector(self, text, is_query=False):
+        """Single text -> 1-D vector, or None when no text embedder is configured."""
         vecs = self.TextDenseVectors([text], is_query=is_query)
         return None if vecs is None else vecs[0]
 
@@ -176,6 +207,7 @@ class Tokenizer:
         with torch.no_grad():
             outputs = self.sparse_model(**tokens)
         vec = torch.max(torch.log(1 + torch.relu(outputs.logits))*tokens['attention_mask'].unsqueeze(-1), dim=1)[0]
+        del outputs
         return vec.squeeze()
     def ImageCaptioning(self, pil_image):
         if self.caption_model_type is not None:
@@ -185,10 +217,7 @@ class Tokenizer:
 
                 caption = self.caption_model.caption(pil_image, length="short")
                 caption = str(caption).strip('Caption: {\'caption\': \'').rstrip('\'}')
-                if self.device == "mps":
-                    torch.mps.empty_cache()
-                elif self.device == "cuda":
-                    torch.cuda.empty_cache()
+                self._release_device_memory()
                 return caption
             if self.caption_model_type == 'llava':
                 if pil_image.mode != "RGB":
@@ -217,10 +246,7 @@ class Tokenizer:
                     caption = generated_text.split("ASSISTANT:")[-1].strip()
                 else:
                     caption = generated_text.strip()
-                if self.device == "mps":
-                    torch.mps.empty_cache()
-                elif self.device == "cuda":
-                    torch.cuda.empty_cache()
+                self._release_device_memory()
                 return caption
             if self.caption_model_type == 'salesforce':
                 if pil_image.mode != "RGB":
@@ -232,10 +258,7 @@ class Tokenizer:
                     outputs = self.caption_model.generate(**inputs, max_new_tokens=50)
                 
                 caption = self.caption_processor.decode(outputs[0], skip_special_tokens=True)
-                if self.device == "mps":
-                    torch.mps.empty_cache()
-                elif self.device == "cuda":
-                    torch.cuda.empty_cache()
+                self._release_device_memory()
                 return caption
             if self.caption_model_type == 'florence':
                 if pil_image.mode != "RGB":
@@ -266,10 +289,7 @@ class Tokenizer:
                 )
                 del inputs, generated_ids, generated_text
             
-                if self.device == "mps":
-                    torch.mps.empty_cache()
-                elif self.device == "cuda":
-                    torch.cuda.empty_cache()
+                self._release_device_memory()
                 return parsed_answer[prompt]
 
         
@@ -283,7 +303,14 @@ class Tokenizer:
                 processed_candidates.append(item)
        
         pairs = [[query, txt] for txt in processed_candidates]
-        scores = self.cross_encoder_model.predict(pairs)
+        if not pairs:
+            return []
+        try:
+            scores = self.cross_encoder_model.predict(
+                pairs, batch_size=CROSS_ENCODER_BATCH_SIZE, show_progress_bar=False
+            )
+        finally:
+            self._release_device_memory()
 
         return scores.tolist()
     

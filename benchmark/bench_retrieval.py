@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 
 from common import (add_model_args, load_tokenizer, load_vector_db, load_beir, sample_queries,
-                    ensure_ingested, source_of, device_info, collection_name_for)
+                    ensure_ingested, source_of, device_info, collection_name_for, gpu_memory_note)
 from metrics import (ndcg_at_k, recall_at_k, mrr_at_k, precision_at_k, dedupe_keep_order,
                      latency_summary, mean)
 
@@ -70,8 +70,8 @@ def evaluate(mode, tok, vdb, queries, qrels, top_k, warmup):
             f"recall@{top_k}": recall_at_k(ranked, rel, top_k),
         })
         if n % 50 == 0:
-            print(f"  [{mode}] {n}/{len(qids)}  nDCG@10 so far={mean([r['ndcg@10'] for r in per_query]):.4f}",
-                  flush=True)
+            print(f"  [{mode}] {n}/{len(qids)}  nDCG@10 so far={mean([r['ndcg@10'] for r in per_query]):.4f}"
+                  f"{gpu_memory_note()}", flush=True)
     keys = [k for k in per_query[0] if k not in ("qid", "mode", "ranked")]
     summary = {k: mean([r[k] for r in per_query]) for k in keys}
     summary.update(latency_summary(latencies))

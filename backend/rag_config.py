@@ -11,6 +11,11 @@ CHUNK_OVERLAP = 200
 RERANK_MULTIPLIER = 4
 RERANK_MAX_CANDIDATES = 100
 
+CROSS_ENCODER_DEVICE = None
+CROSS_ENCODER_BATCH_SIZE = 16
+
+PAD_TO_MULTIPLE_OF = 64
+
 
 def query_prefix_for(model_name):
     """Query instruction some retrieval embedders expect (documents get none, except E5)."""

@@ -38,6 +38,7 @@ def add_model_args(p):
     p.add_argument("--qdrant_host", default="localhost")
     p.add_argument("--qdrant_port", type=int, default=6333)
 
+
 def load_tokenizer(args):
     import Tokenizer as T
     return T.Tokenizer(
@@ -121,11 +122,23 @@ def chunk_corpus(corpus, dataset_tag, chunk_size=rag_config.CHUNK_SIZE,
     return texts, metas
 
 
-def ingest(tokenizer, vdb, texts, metas, batch_size=256, log_every=10) -> Dict[str, float]:
+def gpu_memory_note():
+    try:
+        import torch
+        if torch.backends.mps.is_available():
+            return f"  mps_driver_mem={torch.mps.driver_allocated_memory() / 2**30:.1f}GiB"
+        if torch.cuda.is_available():
+            return f"  cuda_reserved={torch.cuda.memory_reserved() / 2**30:.1f}GiB"
+    except Exception:
+        pass
+    return ""
+
+
+def ingest(tokenizer, vdb, texts, metas, batch_size=256, log_every=10, start_at=0) -> Dict[str, float]:
     t_embed = t_upload = 0.0
     n = len(texts)
     t_start = time.perf_counter()
-    for b, start in enumerate(range(0, n, batch_size)):
+    for b, start in enumerate(range(start_at, n, batch_size)):
         bt, bm = texts[start:start + batch_size], metas[start:start + batch_size]
         t0 = time.perf_counter()
         dense = tokenizer.TextDenseVectors(bt)  
@@ -140,10 +153,13 @@ def ingest(tokenizer, vdb, texts, metas, batch_size=256, log_every=10) -> Dict[s
         t_upload += t2 - t1
         if b % log_every == 0:
             done = min(start + batch_size, n)
-            print(f"  ingested {done}/{n} chunks ({done / (t2 - t_start):.1f} chunks/s)", flush=True)
+            rate = (done - start_at) / (t2 - t_start)
+            print(f"  ingested {done}/{n} chunks ({rate:.1f} chunks/s){gpu_memory_note()}", flush=True)
     total = time.perf_counter() - t_start
-    return {"chunks": n, "total_s": total, "embed_s": t_embed, "upload_s": t_upload,
-            "chunks_per_s": n / total if total else float("nan")}
+    done = n - start_at
+    return {"chunks": n, "chunks_this_run": done, "resumed_from": start_at,
+            "total_s": total, "embed_s": t_embed, "upload_s": t_upload,
+            "chunks_per_s": done / total if total else float("nan")}
 
 
 def ensure_ingested(tokenizer, vdb, corpus, dataset_tag, batch_size, force=False,
@@ -154,8 +170,13 @@ def ensure_ingested(tokenizer, vdb, corpus, dataset_tag, batch_size, force=False
         print(f"Collection '{vdb.collection_name}' already has {have} points "
               f"(need {len(texts)}); skipping ingestion. Use --reingest to redo.")
         return None
-    print(f"Ingesting {len(corpus)} docs -> {len(texts)} chunks into '{vdb.collection_name}'")
-    return ingest(tokenizer, vdb, texts, metas, batch_size=batch_size)
+    start_at = 0 if force else have - have % batch_size
+    if start_at:
+        print(f"Resuming '{vdb.collection_name}': {have} of {len(texts)} chunks already stored, "
+              f"continuing from chunk {start_at}")
+    else:
+        print(f"Ingesting {len(corpus)} docs -> {len(texts)} chunks into '{vdb.collection_name}'")
+    return ingest(tokenizer, vdb, texts, metas, batch_size=batch_size, start_at=start_at)
 
 
 def source_of(point) -> str:
