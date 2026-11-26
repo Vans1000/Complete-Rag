@@ -1,0 +1,52 @@
+{
+  "dataset": "squad",
+  "collection": "bench_squad_bge_small_en_v1_5_c1200",
+  "top_k": 10,
+  "text_dense_model": "BAAI/bge-small-en-v1.5",
+  "chunk_size": 1200,
+  "rerank_multiplier": 4,
+  "llm": {
+    "provider": "openai",
+    "model": "maple-preview-2bit-mlx",
+    "temperature": 0.0
+  },
+  "env": {
+    "python": "3.11.15",
+    "platform": "macOS-27.2.1-arm64-arm-64bit",
+    "torch": "2.11.0",
+    "device": "mps"
+  },
+  "ingestion": null,
+  "summary": {
+    "n": 200,
+    "errors": 0,
+    "gold_hit@1": 0.915,
+    "gold_hit@10": 0.985,
+    "answer_in_context": 0.985,
+    "answer_contains": 0.875,
+    "token_f1": 0.08497751101119709,
+    "exact_match": 0.0,
+    "abstention_rate": 0.025,
+    "empty_response_rate": 0.02,
+    "llm_judge_acc": 0.8469387755102041,
+    "avg_context_chars": 11000.07,
+    "latency_retrieval": {
+      "mean_ms": 774.9129541471484,
+      "p50_ms": 772.2547499870416,
+      "p95_ms": 933.126072914456,
+      "max_ms": 1091.3194579770789
+    },
+    "latency_generation": {
+      "mean_ms": 2999.9977827470866,
+      "p50_ms": 2234.544437524164,
+      "p95_ms": 6903.923564244179,
+      "max_ms": 18137.082500034012
+    },
+    "latency_total": {
+      "mean_ms": 3830.967809178401,
+      "p50_ms": 3068.374625494471,
+      "p95_ms": 7767.842218760053,
+      "max_ms": 19098.882207996212
+    }
+  }
+}

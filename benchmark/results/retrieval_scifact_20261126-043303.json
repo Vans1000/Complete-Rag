@@ -1,0 +1,73 @@
+{
+  "dataset": "scifact",
+  "split": "test",
+  "collection": "bench_scifact_sparseonly_c1200",
+  "n_docs": 5183,
+  "n_queries": 300,
+  "top_k": 10,
+  "models": {
+    "text_dense_model": "None",
+    "sparse_model": "naver/splade-v3",
+    "cross_encoder_model": "Alibaba-NLP/gte-reranker-modernbert-base"
+  },
+  "chunking": {
+    "chunk_size": 1200,
+    "chunk_overlap": 200
+  },
+  "rerank_multiplier": 4,
+  "rerank_pool": 40,
+  "env": {
+    "python": "3.11.15",
+    "platform": "macOS-27.2.1-arm64-arm-64bit",
+    "torch": "2.11.0",
+    "device": "mps"
+  },
+  "model_load_s": 4.69640412501758,
+  "ingestion": {
+    "chunks": 12142,
+    "chunks_this_run": 12142,
+    "resumed_from": 0,
+    "total_s": 307.2738912500208,
+    "embed_s": 251.59002079395577,
+    "upload_s": 55.6830507501727,
+    "chunks_per_s": 39.51523492804785
+  },
+  "results": {
+    "sparse": {
+      "ndcg@10": 0.710738407066302,
+      "mrr@10": 0.6854021164021165,
+      "p@5": 0.1726666666666672,
+      "recall@5": 0.7836666666666666,
+      "recall@10": 0.8127222222222222,
+      "mean_ms": 23.008797411457635,
+      "p50_ms": 22.09189598215744,
+      "p95_ms": 29.78479439334479,
+      "max_ms": 36.59783297916874,
+      "qps": 43.461636960740606
+    },
+    "full": {
+      "ndcg@10": 0.7533824310682167,
+      "mrr@10": 0.7315502645502646,
+      "p@5": 0.17933333333333398,
+      "recall@5": 0.807111111111111,
+      "recall@10": 0.8427222222222223,
+      "mean_ms": 854.4957295714024,
+      "p50_ms": 833.4906664968003,
+      "p95_ms": 1081.3096916128416,
+      "max_ms": 1257.8613340156153,
+      "qps": 1.1702808631958637
+    },
+    "sparse_ce": {
+      "ndcg@10": 0.7455605542350608,
+      "mrr@10": 0.7307632275132275,
+      "p@5": 0.17666666666666722,
+      "recall@5": 0.7939999999999999,
+      "recall@10": 0.8127222222222222,
+      "mean_ms": 219.4820261389638,
+      "p50_ms": 208.901000500191,
+      "p95_ms": 261.04738543508574,
+      "max_ms": 435.90083299204707,
+      "qps": 4.556181741127429
+    }
+  }
+}

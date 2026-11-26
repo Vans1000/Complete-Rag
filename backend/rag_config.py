@@ -18,7 +18,6 @@ PAD_TO_MULTIPLE_OF = 64
 
 
 def query_prefix_for(model_name):
-    """Query instruction some retrieval embedders expect (documents get none, except E5)."""
     if not model_name:
         return "", ""
     n = model_name.lower()

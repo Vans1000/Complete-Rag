@@ -1,0 +1,53 @@
+{
+  "dataset": "fiqa",
+  "split": "test",
+  "collection": "bench_fiqa_bge_small_en_v1_5_c1200",
+  "n_docs": 57638,
+  "n_queries": 300,
+  "top_k": 10,
+  "models": {
+    "text_dense_model": "BAAI/bge-small-en-v1.5",
+    "sparse_model": "naver/splade-v3",
+    "cross_encoder_model": "Alibaba-NLP/gte-reranker-modernbert-base"
+  },
+  "chunking": {
+    "chunk_size": 1200,
+    "chunk_overlap": 200
+  },
+  "rerank_multiplier": 4,
+  "rerank_pool": 40,
+  "env": {
+    "python": "3.11.15",
+    "platform": "macOS-27.2.1-arm64-arm-64bit",
+    "torch": "2.11.0",
+    "device": "mps"
+  },
+  "model_load_s": 5.596180707972962,
+  "ingestion": null,
+  "results": {
+    "hybrid": {
+      "ndcg@10": 0.399068331496168,
+      "mrr@10": 0.4821203703703703,
+      "p@5": 0.1780000000000002,
+      "recall@5": 0.39021608946608943,
+      "recall@10": 0.4573672438672439,
+      "mean_ms": 35.07888998972097,
+      "p50_ms": 34.39922948018648,
+      "p95_ms": 40.79096248315182,
+      "max_ms": 49.06799999298528,
+      "qps": 28.507173410932506
+    },
+    "full": {
+      "ndcg@10": 0.45358544609752394,
+      "mrr@10": 0.5349378306878306,
+      "p@5": 0.204666666666667,
+      "recall@5": 0.44169769119769114,
+      "recall@10": 0.5191251803751804,
+      "mean_ms": 850.8526444547655,
+      "p50_ms": 829.4195420166943,
+      "p95_ms": 990.1325728947995,
+      "max_ms": 1213.9638750231825,
+      "qps": 1.175291640118025
+    }
+  }
+}
