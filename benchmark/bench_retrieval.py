@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 
 from common import (add_model_args, load_tokenizer, load_vector_db, load_beir, sample_queries,
-                    ensure_ingested, source_of, device_info)
+                    ensure_ingested, source_of, device_info, collection_name_for)
 from metrics import (ndcg_at_k, recall_at_k, mrr_at_k, precision_at_k, dedupe_keep_order,
                      latency_summary, mean)
 
@@ -14,7 +14,8 @@ ALL_MODES = ["dense", "sparse", "hybrid", "full", "sparse_ce"]
 
 def encode_query(tok, q):
     from qdrant_client import models
-    dense = tok.DenseVectorRetrieval(textList=[q])[1].tolist()
+    vec = tok.TextDenseVector(q, is_query=True)
+    dense = None if vec is None else vec.tolist()
     sp = tok.SparseTokens(q)
     idx = sp.nonzero().flatten().cpu().tolist()
     vals = sp[idx].cpu().tolist()
@@ -27,6 +28,8 @@ def run_mode(mode, tok, vdb, q, top_k):
         return vdb.Search(tokenizer=tok, query_text=q, top_k=top_k)
     dense, sparse = encode_query(tok, q)
     c, name = vdb.client, vdb.collection_name
+    if dense is None and mode in ("dense", "hybrid"):
+        raise ValueError(f"mode '{mode}' needs a text embedder (got --text_dense_model None)")
     if mode == "dense":
         return c.query_points(name, query=dense, using="text_dense", limit=top_k, with_payload=True).points
     if mode == "sparse":
@@ -90,7 +93,8 @@ def main():
     p.add_argument("--dataset", default="scifact",
                    help="BEIR dataset name on HF hub: scifact, nfcorpus, fiqa, arguana, scidocs, trec-covid ...")
     p.add_argument("--split", default="test")
-    p.add_argument("--collection", default=None, help="Qdrant collection (default: bench_<dataset>)")
+    p.add_argument("--collection", default=None,
+                   help="Qdrant collection (default: bench_<dataset>_<text model>_c<chunk size>)")
     p.add_argument("--modes", nargs="+", default=ALL_MODES, choices=ALL_MODES)
     p.add_argument("--top_k", type=int, default=20,
                    help="Chunks retrieved per query (also the rerank depth for 'full'). App default is 5-10.")
@@ -103,7 +107,7 @@ def main():
     add_model_args(p)
     args = p.parse_args()
 
-    collection = args.collection or f"bench_{args.dataset.replace('-', '_')}"
+    collection = args.collection or collection_name_for(args, args.dataset)
     print(f"Loading BEIR/{args.dataset} ...")
     corpus, queries, qrels = load_beir(args.dataset, args.split)
     queries = sample_queries(queries, args.max_queries, args.seed)
@@ -113,9 +117,15 @@ def main():
     t0 = time.perf_counter()
     tok = load_tokenizer(args)
     model_load_s = time.perf_counter() - t0
-    vdb = load_vector_db(args, collection)
+    vdb = load_vector_db(args, collection, tok)
+    if tok.text_dense_model is None:
+        dropped = [m for m in args.modes if m in ("dense", "hybrid")]
+        if dropped:
+            print(f"No text embedder: skipping modes {dropped}")
+        args.modes = [m for m in args.modes if m not in ("dense", "hybrid")]
 
-    ingest_stats = ensure_ingested(tok, vdb, corpus, args.dataset, args.batch_size, force=args.reingest)
+    ingest_stats = ensure_ingested(tok, vdb, corpus, args.dataset, args.batch_size, force=args.reingest,
+                                   chunk_size=args.chunk_size, chunk_overlap=args.chunk_overlap)
 
     results, all_rows = {}, []
     for mode in args.modes:
@@ -134,7 +144,9 @@ def main():
     report = {
         "dataset": args.dataset, "split": args.split, "collection": collection,
         "n_docs": len(corpus), "n_queries": len(queries), "top_k": args.top_k,
-        "models": {k: getattr(args, k) for k in ("dense_model", "sparse_model", "cross_encoder_model")},
+        "models": {k: getattr(args, k) for k in ("text_dense_model", "sparse_model", "cross_encoder_model")},
+        "chunking": {"chunk_size": args.chunk_size, "chunk_overlap": args.chunk_overlap},
+        "rerank_multiplier": args.rerank_multiplier, "rerank_pool": vdb.candidate_pool(args.top_k),
         "env": device_info(), "model_load_s": model_load_s, "ingestion": ingest_stats,
         "results": results,
     }
@@ -144,6 +156,8 @@ def main():
             f.write(json.dumps(r) + "\n")
     base.with_suffix(".md").write_text(
         f"# Retrieval benchmark — BEIR/{args.dataset} ({len(queries)} queries, top_k={args.top_k})\n\n"
+        f"Text embedder: {args.text_dense_model} · chunks: {args.chunk_size}/{args.chunk_overlap} · "
+        f"rerank pool: {vdb.candidate_pool(args.top_k)} (x{args.rerank_multiplier})  \n"
         f"Device: {report['env'].get('device', '?')}\n\n{table}\n")
     print(f"Saved {base}.json / .md / _per_query.jsonl")
 

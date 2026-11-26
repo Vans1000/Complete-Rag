@@ -3,18 +3,15 @@ import multiprocessing as mp
 import queue
 from datasets import load_dataset
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from rag_config import CHUNK_SIZE, CHUNK_OVERLAP
 
 def _worker_fetch_and_split(worker_id, num_workers, output_queue, dataset_config):
-    """
-    Worker process to fetch, shard, and chunk ANY Hugging Face dataset.
-    """
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=dataset_config.get("chunk_size", 3000), 
-        chunk_overlap=dataset_config.get("chunk_overlap", 500), 
+        chunk_size=dataset_config.get("chunk_size", CHUNK_SIZE), 
+        chunk_overlap=dataset_config.get("chunk_overlap", CHUNK_OVERLAP), 
         separators=["\n\n", "\n", " ", ""]
     )
     
-    # Load dataset dynamically based on config
     ds = load_dataset(
         dataset_config["path"], 
         dataset_config.get("name"), 
@@ -28,7 +25,6 @@ def _worker_fetch_and_split(worker_id, num_workers, output_queue, dataset_config
 
     try:
         for entry in shard:
-            # Extract text and handle potential missing keys
             content = entry.get(text_column, "")
             if not content:
                 continue
@@ -36,11 +32,9 @@ def _worker_fetch_and_split(worker_id, num_workers, output_queue, dataset_config
             chunks = splitter.split_text(content)
             metadatas = []
             
-            # Identify unique identifier for the source (e.g., Title or ID)
             source_id = str(entry.get(id_column, uuid.uuid4().hex))
 
             for i, chunk_text in enumerate(chunks):
-                # Build metadata dynamically by including all original columns or specific ones
                 meta = {
                     "text": chunk_text, 
                     "source_id": source_id,
@@ -48,7 +42,6 @@ def _worker_fetch_and_split(worker_id, num_workers, output_queue, dataset_config
                     "type": "text",
                     "path": f"hf://{dataset_config['path']}/{source_id}"
                 }
-                # Optional: Merge other useful columns into metadata
                 for col in dataset_config.get("extra_metadata_columns", []):
                     if col in entry:
                         meta[col] = entry[col]
@@ -77,8 +70,8 @@ class HuggingFaceDataset:
             "text_column": text_column,
             "id_column": id_column,
             "extra_metadata_columns": extra_metadata_columns or [],
-            "chunk_size": 3000,
-            "chunk_overlap": 500
+            "chunk_size": CHUNK_SIZE,
+            "chunk_overlap": CHUNK_OVERLAP
         }
 
         print(f"🚀 Ingesting {dataset_path} (Text: {text_column}, Workers: {num_workers})")
@@ -126,16 +119,15 @@ class HuggingFaceDataset:
         print(f"\n✨ Ingestion Complete. Total points: {total_ingested}")
 
     def _process_and_upload_batch(self, texts, metadatas):
-        _, dense_vectors = self.tokenizer.BatchDenseVectorRetrieval(text_lists=texts)
+        dense_vectors = self.tokenizer.TextDenseVectors(texts)
         sparse_vectors = self.tokenizer.BatchSparseTokens(texts)
 
         for i in range(len(texts)):
-            # Generate a consistent UUID based on the source and chunk index
             unique_key = f"{metadatas[i]['source_id']}_ch{metadatas[i]['chunk_idx']}"
             doc_uuid = str(uuid.uuid5(uuid.NAMESPACE_DNS, unique_key))
             self.vector_db.upload_text(
                 doc_id=doc_uuid, 
-                dense_vector=dense_vectors[i], 
+                dense_vector=None if dense_vectors is None else dense_vectors[i],
                 sparse_vector=sparse_vectors[i], 
                 metadata=metadatas[i]
             )

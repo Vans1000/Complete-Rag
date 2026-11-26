@@ -6,6 +6,7 @@ import os
 import warnings
 from transformers import logging
 import numpy as np
+from rag_config import TEXT_DENSE_MODEL, query_prefix_for
 
 os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
@@ -14,7 +15,7 @@ warnings.filterwarnings("ignore")
 logging.set_verbosity_error()
 
 class Tokenizer:
-    def __init__(self, dense_model="clip-ViT-B-32", sparse_model="naver/splade-v3", cross_encoder_model="cross-encoder/ms-marco-MiniLM-L-12-v2", vision_rerank_model="nvidia/llama-nemotron-rerank-vl-1b-v2", caption_model="None"):
+    def __init__(self, dense_model="clip-ViT-B-32", sparse_model="naver/splade-v3", cross_encoder_model="cross-encoder/ms-marco-MiniLM-L-12-v2", vision_rerank_model="nvidia/llama-nemotron-rerank-vl-1b-v2", caption_model="None", text_dense_model=TEXT_DENSE_MODEL):
         self.dense_model_name = dense_model
         self.sparse_model_name = sparse_model
         self.cross_encoder_model_name = cross_encoder_model
@@ -29,30 +30,36 @@ class Tokenizer:
             else:
                 self.device = torch.device("cpu")
         self.dense_model = SentenceTransformer(dense_model, model_kwargs={"use_fast": True}).to(self.device)
+        self._load_text_dense(text_dense_model)
         self.sparse_tokenizer = AutoTokenizer.from_pretrained(sparse_model, use_fast=True)
         self.sparse_model = AutoModelForMaskedLM.from_pretrained(sparse_model).to(self.device)
         self.cross_encoder_model = CrossEncoder(cross_encoder_model)
-        processor_kwargs = {
-            "trust_remote_code": True,
-            "max_input_tiles": 6,
-            "use_thumbnail": True,
-            "rerank_max_length": 10240, 
-            "use_fast": False
-        }
-        self.vision_processor = AutoProcessor.from_pretrained(
-            vision_rerank_model, 
-            **processor_kwargs
-        )
-        self.vision_model = AutoModelForSequenceClassification.from_pretrained(
-            vision_rerank_model,
-            dtype=torch.bfloat16,
-            trust_remote_code=True,
-            attn_implementation="eager",  
-            device_map="auto",
-            use_safetensors=True
-        ).to(self.device).eval()
-        
-        if caption_model != "None":
+        if vision_rerank_model and vision_rerank_model != "None":
+            processor_kwargs = {
+                "trust_remote_code": True,
+                "max_input_tiles": 6,
+                "use_thumbnail": True,
+                "rerank_max_length": 10240,
+                "use_fast": False
+            }
+            self.vision_processor = AutoProcessor.from_pretrained(
+                vision_rerank_model,
+                **processor_kwargs
+            )
+            self.vision_model = AutoModelForSequenceClassification.from_pretrained(
+                vision_rerank_model,
+                dtype=torch.bfloat16,
+                trust_remote_code=True,
+                attn_implementation="eager",
+                device_map="auto",
+                use_safetensors=True
+            ).to(self.device).eval()
+        else:
+            self.vision_rerank_model_name = "None"
+            self.vision_processor = None
+            self.vision_model = None
+
+        if caption_model and caption_model != "None":
             if 'moondream2' in str(caption_model):
                 self.caption_model_type = 'moondream2'
                 try:
@@ -110,7 +117,45 @@ class Tokenizer:
                 self.caption_processor = AutoProcessor.from_pretrained(caption_model)
         else:
             self.caption_model_type = None
-        self.i = 0 
+        self.i = 0
+
+    def _load_text_dense(self, model_name):
+        if model_name and str(model_name) != "None":
+            self.text_dense_model_name = model_name
+            self.text_dense_model = SentenceTransformer(model_name).to(self.device).eval()
+            self.text_dense_dim = self.text_dense_model.get_sentence_embedding_dimension()
+            self.text_query_prefix, self.text_doc_prefix = query_prefix_for(model_name)
+        else:
+            self.text_dense_model_name = "None"
+            self.text_dense_model = None
+            self.text_dense_dim = None
+            self.text_query_prefix, self.text_doc_prefix = "", ""
+
+    def TextDenseVectors(self, texts, is_query=False, batch_size=64):
+        if self.text_dense_model is None:
+            return None
+        if isinstance(texts, str):
+            texts = [texts]
+        prefix = self.text_query_prefix if is_query else self.text_doc_prefix
+        if prefix:
+            texts = [prefix + t for t in texts]
+        with torch.no_grad():
+            emb = self.text_dense_model.encode(
+                texts, batch_size=batch_size, convert_to_tensor=True,
+                normalize_embeddings=True, show_progress_bar=False, device=self.device,
+            )
+        out = emb.cpu()
+        del emb
+        if self.device.type == "mps":
+            torch.mps.empty_cache()
+        elif self.device.type == "cuda":
+            torch.cuda.empty_cache()
+        return out
+
+    def TextDenseVector(self, text, is_query=False):
+        vecs = self.TextDenseVectors([text], is_query=is_query)
+        return None if vecs is None else vecs[0]
+
     def DenseVectorRetrieval(self, pil_image=None, textList=None):
         img_emb = None
         text_emb = None
@@ -244,7 +289,7 @@ class Tokenizer:
     
     def VisionRerank(self, query_text, pil_images, captions=None, top_k=5):
     
-        if not pil_images:
+        if not pil_images or self.vision_model is None:
             return []
 
         examples = []
@@ -312,10 +357,6 @@ class Tokenizer:
     
 
     def BatchDenseVectorRetrieval(self, pil_images=None, text_lists=None, batch_size=64):
-        """
-        Memory-efficient batch dense embedding for large batches of images or texts.
-        Processes in chunks to avoid OOM on GPU/MPS devices.
-        """
         img_embeddings = []
         text_embeddings = []
         

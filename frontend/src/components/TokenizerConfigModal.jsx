@@ -1,8 +1,16 @@
 import { useState, useEffect } from 'react';
-import { Modal, Form, Input, Button, Alert, Select, Typography } from 'antd';
+import { Modal, Form, Input, Button, Alert, Select, AutoComplete, Typography } from 'antd';
 import { useAppContext } from '../context/AppContext';
 
 const { Text } = Typography;
+
+const DEFAULT_TEXT_DENSE_MODEL = 'BAAI/bge-small-en-v1.5';
+
+const TEXT_DENSE_OPTIONS = [
+  { label: 'BGE small (384-d, fast)', value: 'BAAI/bge-small-en-v1.5' },
+  { label: 'BGE base (768-d)', value: 'BAAI/bge-base-en-v1.5' },
+  { label: 'None (SPLADE only)', value: 'None' }
+];
 
 const CAPTION_OPTIONS = [
   { label: 'None (Fastest)', value: 'None' },
@@ -22,6 +30,7 @@ export const TokenizerConfigModal = ({ visible, onClose }) => {
     if (visible) {
       form.setFieldsValue({
         denseModel: tokenizerConfig.denseModel,
+        textDenseModel: tokenizerConfig.textDenseModel ?? DEFAULT_TEXT_DENSE_MODEL,
         sparseModel: tokenizerConfig.sparseModel,
         crossEncoderModel: tokenizerConfig.crossEncoderModel,
         visionRerankModel: tokenizerConfig.visionRerankModel,
@@ -34,6 +43,7 @@ export const TokenizerConfigModal = ({ visible, onClose }) => {
           if (data) {
             form.setFieldsValue({
               denseModel: data.dense_model,
+              textDenseModel: data.text_dense_model ?? DEFAULT_TEXT_DENSE_MODEL,
               sparseModel: data.sparse_model,
               crossEncoderModel: data.cross_encoder_model,
               visionRerankModel: data.vision_rerank_model,
@@ -56,6 +66,7 @@ export const TokenizerConfigModal = ({ visible, onClose }) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           dense_model: values.denseModel,
+          text_dense_model: values.textDenseModel,
           sparse_model: values.sparseModel,
           cross_encoder_model: values.crossEncoderModel,
           vision_rerank_model: values.visionRerankModel,
@@ -66,12 +77,14 @@ export const TokenizerConfigModal = ({ visible, onClose }) => {
       if (response.ok) {
         updateTokenizerConfig({
           denseModel: values.denseModel,
+          textDenseModel: values.textDenseModel,
           sparseModel: values.sparseModel,
           crossEncoderModel: values.crossEncoderModel,
           visionRerankModel: values.visionRerankModel,
           captionModel: values.captionModel
         });
-        setStatus({ type: 'success', message: 'Tokenizer models updated! Restart ingestion for changes to take full effect.' });
+        const result = await response.json().catch(() => ({}));
+        setStatus({ type: 'success', message: result.message || 'Tokenizer models updated! Restart ingestion for changes to take full effect.' });
       } else {
         const error = await response.json();
         setStatus({ type: 'error', message: error.detail || 'Update failed' });
@@ -94,7 +107,19 @@ export const TokenizerConfigModal = ({ visible, onClose }) => {
       okText="Save Configuration"
     >
       <Form form={form} layout="vertical">
-        <Form.Item name="denseModel" label="Dense Embedding Model" rules={[{ required: true }]}>
+        <Form.Item
+          name="textDenseModel"
+          label="Text Embedding Model"
+          tooltip="Embeds text chunks. Changing it needs a new collection; 'None' uses SPLADE only for text."
+          rules={[{ required: true }]}
+        >
+          <AutoComplete
+            options={TEXT_DENSE_OPTIONS}
+            placeholder="Any sentence-transformers model, or None"
+          />
+        </Form.Item>
+
+        <Form.Item name="denseModel" label="Image Embedding Model (CLIP)" rules={[{ required: true }]}>
           <Input placeholder="e.g. clip-ViT-B-32" />
         </Form.Item>
 

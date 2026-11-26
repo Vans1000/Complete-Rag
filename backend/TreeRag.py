@@ -89,7 +89,9 @@ class TreeRAG:
                     for n in current_nodes
                 ])
             else:
-                _, emb_t = self.tokenizer.BatchDenseVectorRetrieval(text_lists=texts)
+                emb_t = self.tokenizer.TextDenseVectors(texts)
+                if emb_t is None:  # SPLADE-only mode: cluster on CLIP text embeddings instead
+                    _, emb_t = self.tokenizer.BatchDenseVectorRetrieval(text_lists=texts)
                 emb = emb_t.numpy()
 
             labels = self.cluster_texts(emb)
@@ -143,7 +145,7 @@ class TreeRAG:
         sparse_vec = node.get('sparse_vector')
 
         if dense_vec is None:
-            _, dense_vec = self.tokenizer.DenseVectorRetrieval(textList=[text])
+            dense_vec = self.tokenizer.TextDenseVector(text)
         if sparse_vec is None:
             sparse_vec = self.tokenizer.SparseTokens(text)
 
@@ -165,10 +167,6 @@ class TreeRAG:
         )
 
     def query(self, query_text: str, top_k: int = 5, fanout: int = 5, summary_breadth: int = 10, leaf_breadth: int = 15) -> List[Any]:
-        """
-        Top-down traversal. Search level L, collect child_ids from the hits,
-        search level L-1 restricted to those IDs, repeat until we hit level 0.
-        """
         if self.max_level < 0:
             return self.vector_db.Search(
                 tokenizer=self.tokenizer, query_text=query_text, top_k=top_k
@@ -214,7 +212,6 @@ class TreeRAG:
             candidate_ids = next_ids
             current_level -= 1
 
-        # Shouldn't normally reach here.
         return self.vector_db.Search(
             tokenizer=self.tokenizer, query_text=query_text, top_k=top_k
         )

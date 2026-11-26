@@ -34,6 +34,7 @@ export const AppProvider = ({ children }) => {
     const saved = localStorage.getItem('tokenizer_config');
     return saved ? JSON.parse(saved) : {
       denseModel: 'clip-ViT-B-32',
+      textDenseModel: 'BAAI/bge-small-en-v1.5',
       sparseModel: 'naver/splade-v3',
       crossEncoderModel: 'cross-encoder/ms-marco-MiniLM-L-12-v2',
       visionRerankModel: 'nvidia/llama-nemotron-rerank-vl-1b-v2',

@@ -5,6 +5,13 @@ import string
 from collections import Counter
 from typing import Dict, Iterable, List, Sequence
 
+
+# --------------------------------------------------------------------------- #
+# Retrieval metrics
+#   ranked: ordered list of doc ids returned by the system (deduplicated)
+#   qrels:  {doc_id: graded relevance}; relevance > 0 counts as relevant
+# --------------------------------------------------------------------------- #
+
 def dcg(gains: Sequence[float]) -> float:
     return sum((2 ** g - 1) / math.log2(i + 2) for i, g in enumerate(gains))
 
@@ -48,6 +55,11 @@ def dedupe_keep_order(ids: Iterable[str]) -> List[str]:
             out.append(x)
     return out
 
+
+# --------------------------------------------------------------------------- #
+# QA metrics (SQuAD-style normalisation)
+# --------------------------------------------------------------------------- #
+
 def normalize_answer(s: str) -> str:
     s = s.lower()
     s = "".join(ch for ch in s if ch not in set(string.punctuation))
@@ -79,6 +91,11 @@ def answer_contains(pred: str, golds: List[str]) -> float:
     The right 'accuracy' proxy for verbose, citation-heavy generative answers."""
     p = f" {normalize_answer(pred)} "
     return float(any(f" {normalize_answer(g)} " in p for g in golds if normalize_answer(g)))
+
+
+# --------------------------------------------------------------------------- #
+# Latency
+# --------------------------------------------------------------------------- #
 
 def percentile(values: List[float], pct: float) -> float:
     if not values:

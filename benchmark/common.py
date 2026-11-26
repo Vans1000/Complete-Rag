@@ -10,6 +10,7 @@ BACKEND = Path(__file__).resolve().parent.parent / "backend"
 sys.path.insert(0, str(BACKEND))
 
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+import rag_config
 os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 
 DEFAULTS = {
@@ -21,7 +22,13 @@ DEFAULTS = {
 
 
 def add_model_args(p):
-    p.add_argument("--dense_model", default=DEFAULTS["dense_model"])
+    p.add_argument("--dense_model", default=DEFAULTS["dense_model"], help="CLIP model (images/captions)")
+    p.add_argument("--text_dense_model", default=rag_config.TEXT_DENSE_MODEL,
+                   help="Text-chunk embedder; 'None' = SPLADE-only text retrieval")
+    p.add_argument("--chunk_size", type=int, default=rag_config.CHUNK_SIZE)
+    p.add_argument("--chunk_overlap", type=int, default=rag_config.CHUNK_OVERLAP)
+    p.add_argument("--rerank_multiplier", type=int, default=rag_config.RERANK_MULTIPLIER,
+                   help="Search() candidate pool = top_k * this (1 = old behaviour)")
     p.add_argument("--sparse_model", default=DEFAULTS["sparse_model"])
     p.add_argument("--cross_encoder_model", default=DEFAULTS["cross_encoder_model"])
     p.add_argument("--vision_rerank_model", default=DEFAULTS["vision_rerank_model"])
@@ -32,51 +39,33 @@ def add_model_args(p):
     p.add_argument("--qdrant_port", type=int, default=6333)
 
 def load_tokenizer(args):
-    """Instantiate the project's Tokenizer. By default skips the vision reranker
-    and captioner, which are never exercised on text-only corpora."""
-    import torch
     import Tokenizer as T
-
-    if args.load_vision:
-        return T.Tokenizer(
-            dense_model=args.dense_model, sparse_model=args.sparse_model,
-            cross_encoder_model=args.cross_encoder_model,
-            vision_rerank_model=args.vision_rerank_model, caption_model="None",
-        )
-
-    tok = T.Tokenizer.__new__(T.Tokenizer)
-    tok.dense_model_name = args.dense_model
-    tok.sparse_model_name = args.sparse_model
-    tok.cross_encoder_model_name = args.cross_encoder_model
-    tok.vision_rerank_model_name = None
-    tok.caption_model_name = "None"
-    if torch.cuda.is_available():
-        tok.device = torch.device("cuda")
-    elif torch.backends.mps.is_available():
-        tok.device = torch.device("mps")
-    else:
-        tok.device = torch.device("cpu")
-    tok.dense_model = T.SentenceTransformer(args.dense_model, model_kwargs={"use_fast": True}).to(tok.device)
-    tok.sparse_tokenizer = T.AutoTokenizer.from_pretrained(args.sparse_model, use_fast=True)
-    tok.sparse_model = T.AutoModelForMaskedLM.from_pretrained(args.sparse_model).to(tok.device)
-    tok.cross_encoder_model = T.CrossEncoder(args.cross_encoder_model)
-    tok.vision_processor = None
-    tok.vision_model = None
-    tok.caption_model_type = None
-    tok.i = 0
-    return tok
+    return T.Tokenizer(
+        dense_model=args.dense_model, text_dense_model=args.text_dense_model,
+        sparse_model=args.sparse_model, cross_encoder_model=args.cross_encoder_model,
+        vision_rerank_model=args.vision_rerank_model if args.load_vision else "None",
+        caption_model="None",
+    )
 
 
-def load_vector_db(args, collection):
+def collection_name_for(args, dataset_tag):
+    import re
+    model = "sparseonly" if str(args.text_dense_model) == "None" else \
+        re.sub(r"[^a-z0-9]+", "_", args.text_dense_model.split("/")[-1].lower()).strip("_")
+    return f"bench_{dataset_tag.replace('-', '_')}_{model}_c{args.chunk_size}"
+
+
+def load_vector_db(args, collection, tokenizer=None):
     from VectorDatabase import VectorDatabase
-    return VectorDatabase(host=args.qdrant_host, port=args.qdrant_port, collection_name=collection)
+    return VectorDatabase(host=args.qdrant_host, port=args.qdrant_port, collection_name=collection,
+                          text_dense_dim=getattr(tokenizer, "text_dense_dim", None),
+                          rerank_multiplier=args.rerank_multiplier)
 
 
 def collection_count(vdb) -> int:
     return vdb.client.count(collection_name=vdb.collection_name, exact=True).count
 
 def load_beir(name: str, split: str = "test"):
-    """BEIR datasets as mirrored on the Hugging Face hub (BeIR/<name>, BeIR/<name>-qrels)."""
     from datasets import load_dataset
     corpus_ds = load_dataset(f"BeIR/{name}", "corpus", split="corpus")
     queries_ds = load_dataset(f"BeIR/{name}", "queries", split="queries")
@@ -93,7 +82,6 @@ def load_beir(name: str, split: str = "test"):
 
 
 def load_squad(max_questions: int, seed: int = 0):
-    """SQuAD v1.1 validation: corpus = unique paragraphs, one gold paragraph per question."""
     import hashlib
     from datasets import load_dataset
     ds = load_dataset("rajpurkar/squad", split="validation")
@@ -115,8 +103,9 @@ def sample_queries(queries: Dict[str, str], n: int, seed: int = 0) -> Dict[str, 
     random.Random(seed).shuffle(keys)
     return {k: queries[k] for k in keys[:n]}
 
-def chunk_corpus(corpus, dataset_tag, chunk_size=3000, chunk_overlap=500) -> Tuple[List[str], List[dict]]:
-    """Same splitter + parameters as HuggingFaceDataset.py."""
+def chunk_corpus(corpus, dataset_tag, chunk_size=rag_config.CHUNK_SIZE,
+                 chunk_overlap=rag_config.CHUNK_OVERLAP) -> Tuple[List[str], List[dict]]:
+    """Same splitter as HuggingFaceDataset.py."""
     from langchain_text_splitters import RecursiveCharacterTextSplitter
     splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap,
                                               separators=["\n\n", "\n", " ", ""])
@@ -139,12 +128,13 @@ def ingest(tokenizer, vdb, texts, metas, batch_size=256, log_every=10) -> Dict[s
     for b, start in enumerate(range(0, n, batch_size)):
         bt, bm = texts[start:start + batch_size], metas[start:start + batch_size]
         t0 = time.perf_counter()
-        _, dense = tokenizer.BatchDenseVectorRetrieval(text_lists=bt)
+        dense = tokenizer.TextDenseVectors(bt)  
         sparse = tokenizer.BatchSparseTokens(bt)
         t1 = time.perf_counter()
         for i in range(len(bt)):
             pid = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{bm[i]['path']}_ch{bm[i]['chunk_idx']}"))
-            vdb.upload_text(doc_id=pid, dense_vector=dense[i], sparse_vector=sparse[i], metadata=bm[i])
+            vdb.upload_text(doc_id=pid, dense_vector=None if dense is None else dense[i],
+                            sparse_vector=sparse[i], metadata=bm[i])
         t2 = time.perf_counter()
         t_embed += t1 - t0
         t_upload += t2 - t1
@@ -156,8 +146,9 @@ def ingest(tokenizer, vdb, texts, metas, batch_size=256, log_every=10) -> Dict[s
             "chunks_per_s": n / total if total else float("nan")}
 
 
-def ensure_ingested(tokenizer, vdb, corpus, dataset_tag, batch_size, force=False):
-    texts, metas = chunk_corpus(corpus, dataset_tag)
+def ensure_ingested(tokenizer, vdb, corpus, dataset_tag, batch_size, force=False,
+                    chunk_size=rag_config.CHUNK_SIZE, chunk_overlap=rag_config.CHUNK_OVERLAP):
+    texts, metas = chunk_corpus(corpus, dataset_tag, chunk_size, chunk_overlap)
     have = collection_count(vdb)
     if have >= len(texts) and not force:
         print(f"Collection '{vdb.collection_name}' already has {have} points "

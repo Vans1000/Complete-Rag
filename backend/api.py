@@ -24,6 +24,7 @@ from HuggingFaceDataset import HuggingFaceDataset
 from qdrant_client import QdrantClient
 from qdrant_client.models import VectorParams, Distance, SparseVectorParams
 from fastapi import APIRouter
+from rag_config import TEXT_DENSE_MODEL
 
 app_state = {
     "tokenizer": None,
@@ -111,6 +112,7 @@ class ScrollRequest(BaseModel):
 
 class TokenizerConfig(BaseModel):
     dense_model: str = "clip-ViT-B-32"
+    text_dense_model: str = TEXT_DENSE_MODEL
     sparse_model: str = "naver/splade-v3"
     cross_encoder_model: str = "cross-encoder/ms-marco-MiniLM-L-12-v2"
     vision_rerank_model: str = "nvidia/llama-nemotron-rerank-vl-1b-v2"
@@ -129,10 +131,6 @@ async def lifespan(app: FastAPI):
 
 
 async def _validate_llm(prov: str, base: str, api_key: Optional[str], model: str) -> None:
-    """
-    Do a cheap authenticated round-trip to confirm credentials + reachability.
-    Raises HTTPException(400) with the provider's message on failure.
-    """
     base = (base or "").rstrip("/")
 
     if prov == "ollama":
@@ -185,6 +183,16 @@ app.add_middleware(
 )
 
 
+def _open_collection(name: str, host: str = "localhost", port: int = 6333) -> VectorDatabase:
+    tok = app_state.get("tokenizer")
+    current = app_state.get("vector_db")
+    kwargs = {}
+    if current is not None:
+        kwargs = {"rerank_multiplier": current.rerank_multiplier, "max_candidates": current.max_candidates}
+    return VectorDatabase(host=host, port=port, collection_name=name,
+                          text_dense_dim=getattr(tok, "text_dense_dim", None), **kwargs)
+
+
 def get_rag_chat():
     if app_state["rag_chat"] is None:
         raise HTTPException(status_code=503, detail="LLM not configured. Call /config/llm first.")
@@ -193,7 +201,6 @@ def get_rag_chat():
 
 @app.get("/collections/active")
 async def get_active_collection():
-    """Return the currently active collection name"""
     if app_state["vector_db"] is None:
         raise HTTPException(status_code=503, detail="Vector DB not initialized")
     return {"collection": app_state["vector_db"].collection_name}
@@ -243,7 +250,6 @@ async def set_tree_rag(data: dict):
 
 @app.post("/config/llm")
 async def configure_llm(config: LLMConfig):
-    """Configure the LLM provider (OpenAI, Ollama, LM Studio, or any OpenAI-compatible endpoint)."""
     try:
         prov = (config.provider or "openai").lower()
         base = (config.base_url or "").rstrip("/")
@@ -295,12 +301,7 @@ async def get_available_models(
     base_url: Optional[str] = FastAPIQuery(None),
     api_key: Optional[str] = FastAPIQuery(None),
 ):
-    """
-    Live-probe the provider for its model list.
-    - Ollama          -> GET {base}/api/tags
-    - OpenAI-compatible (openai, lm_studio, custom) -> GET {base}/models
-    Falls back to a static list if the probe fails.
-    """
+
     p = (provider or "openai").lower()
     base = (base_url or _STATIC_BASES.get(p) or "").rstrip("/")
 
@@ -375,6 +376,7 @@ async def get_tokenizer_config():
         raise HTTPException(status_code=503, detail="Tokenizer not initialized")
     return {
         "dense_model": app_state["tokenizer"].dense_model_name,
+        "text_dense_model": app_state["tokenizer"].text_dense_model_name,
         "sparse_model": app_state["tokenizer"].sparse_model_name,
         "cross_encoder_model": app_state["tokenizer"].cross_encoder_model_name,
         "vision_rerank_model": app_state["tokenizer"].vision_rerank_model_name,
@@ -388,6 +390,7 @@ async def configure_tokenizer(config: TokenizerConfig):
     try:
         app_state["tokenizer"] = Tokenizer(
             dense_model=config.dense_model,
+            text_dense_model=config.text_dense_model,
             sparse_model=config.sparse_model,
             cross_encoder_model=config.cross_encoder_model,
             vision_rerank_model=config.vision_rerank_model,
@@ -397,7 +400,16 @@ async def configure_tokenizer(config: TokenizerConfig):
             app_state["rag_chat"].tokenizer = app_state["tokenizer"]
         if app_state["web_search"]:
             app_state["web_search"].tokenizer = app_state["tokenizer"]
-        return {"status": "success", "message": "Tokenizer reconfigured"}
+        if app_state.get("tree_rag") is not None:
+            app_state["tree_rag"].tokenizer = app_state["tokenizer"]
+        message = "Tokenizer reconfigured"
+        vdb = app_state.get("vector_db")
+        new_dim = app_state["tokenizer"].text_dense_dim
+        if vdb is not None and new_dim is not None and new_dim != vdb.text_dense_dim:
+            message += (f". Note: collection '{vdb.collection_name}' stores {vdb.text_dense_dim}-dim text vectors but "
+                        f"'{config.text_dense_model}' produces {new_dim}-dim ones, so text search there is SPLADE-only. "
+                        f"Create a new collection and re-ingest to use the new embedder.")
+        return {"status": "success", "message": message}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -430,7 +442,6 @@ async def configure_websearch(config: WebSearchConfig):
 @app.post("/query")
 @app.post("/api/query")
 async def query(request: QueryRequest):
-    """Search vector database without LLM generation"""
     try:
         engine = app_state.get("tree_rag")
         if app_state.get("tree_rag_enabled") and engine is not None and engine.max_level >= 0:
@@ -463,7 +474,6 @@ async def query(request: QueryRequest):
 @app.post("/api/chat")
 @app.post("/v1/chat/completions")
 async def chat(request: ChatRequest):
-    """Chat with RAG (non-streaming)"""
     rag_chat = get_rag_chat()
     
     if request.clear_history:
@@ -547,7 +557,7 @@ async def ingest_file(
     
     try:
         if collection and collection != app_state["vector_db"].collection_name:
-            app_state["vector_db"] = VectorDatabase(collection_name=collection)
+            app_state["vector_db"] = _open_collection(collection)
             if app_state["rag_chat"]:
                 app_state["rag_chat"].vector_db = app_state["vector_db"]
         
@@ -618,7 +628,6 @@ async def get_upload_progress(upload_id: str):
 
 @app.post("/ingest/web")
 async def ingest_web(request: IngestURLRequest, background_tasks: BackgroundTasks):
-    """Ingest images, documents, and text files from web search or URL"""
     try:
         if app_state["web_search"] is None:
             raise HTTPException(status_code=503, detail="Web search not initialized")
@@ -700,7 +709,6 @@ async def ingest_web(request: IngestURLRequest, background_tasks: BackgroundTask
 
 @app.post("/ingest/huggingface")
 async def ingest_huggingface(request: HFRequest, background_tasks: BackgroundTasks):
-    """Import HuggingFace dataset"""
     try:
         ingestor = HuggingFaceDataset(app_state["tokenizer"], app_state["vector_db"])
         background_tasks.add_task(
@@ -724,7 +732,6 @@ async def ingest_huggingface(request: HFRequest, background_tasks: BackgroundTas
 
 @app.get("/collections")
 async def list_collections():
-    """List all Qdrant collections"""
     try:
         collections = app_state["vector_db"].client.get_collections()
         return {"collections": [c.name for c in collections.collections]}
@@ -734,21 +741,12 @@ async def list_collections():
 
 @app.post("/collections")
 async def create_collection(config: CollectionConfig):
-    """Create new collection"""
     try:
         client = QdrantClient(host=config.host, port=config.port)
         if not client.collection_exists(config.name):
-            client.create_collection(
-                collection_name=config.name,
-                vectors_config={
-                    "image_dense": VectorParams(size=512, distance=Distance.COSINE),
-                    "text_dense": VectorParams(size=512, distance=Distance.COSINE),
-                    "caption_dense": VectorParams(size=512, distance=Distance.COSINE)
-                },
-                sparse_vectors_config={
-                    "text_sparse": SparseVectorParams(index={}),
-                    "caption_sparse": SparseVectorParams(index={})
-                }
+            VectorDatabase.create_collection(
+                client, config.name,
+                text_dense_dim=getattr(app_state.get("tokenizer"), "text_dense_dim", None),
             )
         return {"status": "created", "name": config.name}
     except Exception as e:
@@ -759,7 +757,7 @@ async def create_collection(config: CollectionConfig):
 async def switch_collection(request: SwitchRequest):
     """Switch active collection"""
     try:
-        app_state["vector_db"] = VectorDatabase(collection_name=request.collection_name)
+        app_state["vector_db"] = _open_collection(request.collection_name)
         if app_state["rag_chat"]:
             app_state["rag_chat"].vector_db = app_state["vector_db"]
         if app_state.get("tree_rag") is not None:
@@ -772,7 +770,6 @@ async def switch_collection(request: SwitchRequest):
 
 @app.get("/dashboard/stats")
 async def collection_stats():
-    """Get collection statistics"""
     try:
         stats = app_state["vector_db"].client.get_collection(
             app_state["vector_db"].collection_name
@@ -794,7 +791,6 @@ async def collection_stats():
 
 @app.post("/dashboard/points")
 async def scroll_points(request: ScrollRequest):
-    """Scroll through points for dashboard"""
     try:
         offset_uuid = None
         if request.offset:

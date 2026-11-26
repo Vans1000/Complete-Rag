@@ -11,6 +11,7 @@ from Wikipedia import Wikipedia
 from HuggingFaceDataset import HuggingFaceDataset
 from transformers import logging
 from TreeRag import TreeRAG
+from rag_config import TEXT_DENSE_MODEL, RERANK_MULTIPLIER
 
 from WebSearch import WebSearch
 from LLM import OpenAILLM, OllamaLLM, RAGChat
@@ -158,7 +159,9 @@ if __name__ == "__main__":
     parser.add_argument("--documents", nargs="+", default=None, help="Paths to the documents to be processed.")
     parser.add_argument("--document_dir", type=str, default=None, help="Directory containing documents to be processed.")
     parser.add_argument("--collection_name", type=str, help="Name of the vector database collection.", required=True)
-    parser.add_argument("--dense_model", type=str, default="clip-ViT-B-32", help="Name of the dense model to use.")
+    parser.add_argument("--dense_model", type=str, default="clip-ViT-B-32", help="CLIP model for images, captions and image search.")
+    parser.add_argument("--text_dense_model", type=str, default=TEXT_DENSE_MODEL, help="Dense embedder for text chunks ('None' = SPLADE-only text retrieval). Changing it needs a new collection.")
+    parser.add_argument("--rerank_multiplier", type=int, default=RERANK_MULTIPLIER, help="Search fetches top_k * this many candidates per source before cross-encoder reranking.")
     parser.add_argument("--sparse_model", type=str, default="naver/splade-v3", help="Name of the sparse model to use.")
     parser.add_argument("--cross_encoder_model", type=str, default="cross-encoder/ms-marco-MiniLM-L-12-v2", help="Name of the cross-encoder model to use.")
     parser.add_argument("--vision_rerank_model", type=str, default="nvidia/llama-nemotron-rerank-vl-1b-v2", help="Name of the vision rerank model to use.")
@@ -212,6 +215,7 @@ if __name__ == "__main__":
 
     tokenizer = Tokenizer(
         dense_model=args.dense_model,
+        text_dense_model=args.text_dense_model,
         sparse_model=args.sparse_model,
         cross_encoder_model=args.cross_encoder_model,
         vision_rerank_model=args.vision_rerank_model,
@@ -220,7 +224,9 @@ if __name__ == "__main__":
     
     print(">>> Tokenizer ready", flush=True)
 
-    vector_db = VectorDatabase(collection_name=args.collection_name)
+    vector_db = VectorDatabase(collection_name=args.collection_name,
+                               text_dense_dim=tokenizer.text_dense_dim,
+                               rerank_multiplier=args.rerank_multiplier)
     
     
     print(">>> Vector DB ready", flush=True)

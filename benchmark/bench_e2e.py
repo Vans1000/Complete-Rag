@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 
 from common import (add_model_args, load_tokenizer, load_vector_db, load_squad, ensure_ingested,
-                    source_of, device_info)
+                    source_of, device_info, collection_name_for)
 from metrics import answer_contains, token_f1, exact_match, latency_summary, mean, normalize_answer
 
 ABSTAIN = ["does not contain", "does not have", "no information", "i am sorry", "i apologize",
@@ -72,16 +72,17 @@ def main():
     if args.qa_file:
         collection = args.collection or "documents"
         questions = load_qa_file(args.qa_file)
-        vdb = load_vector_db(args, collection)
+        vdb = load_vector_db(args, collection, tok)
         ingest_stats = None
         tag = Path(args.qa_file).stem
     else:
-        collection = args.collection or "bench_squad"
+        collection = args.collection or collection_name_for(args, "squad")
         print("Loading SQuAD v1.1 validation ...")
         corpus, questions = load_squad(args.n, args.seed)
         print(f"  corpus={len(corpus)} paragraphs, questions={len(questions)}")
-        vdb = load_vector_db(args, collection)
-        ingest_stats = ensure_ingested(tok, vdb, corpus, "squad", args.batch_size, force=args.reingest)
+        vdb = load_vector_db(args, collection, tok)
+        ingest_stats = ensure_ingested(tok, vdb, corpus, "squad", args.batch_size, force=args.reingest,
+                                       chunk_size=args.chunk_size, chunk_overlap=args.chunk_overlap)
         tag = "squad"
 
     llm = build_llm(args.llm_provider, args.llm_model, args.llm_base_url, args.temperature)
@@ -130,7 +131,7 @@ def main():
                 q["question"], q["question"], False, False, args.top_k, False, False)
             answer = result.get("answer", "") if isinstance(result, dict) else str(result)
             err = None
-        except Exception as e:  
+        except Exception as e:  # keep going; count as failure
             answer, context, err = "", "", repr(e)
         total_s = time.perf_counter() - t0
 
@@ -185,6 +186,7 @@ def main():
         return "n/a" if v is None else f"{v:.4f}"
     md = [f"# End-to-end benchmark — {tag} ({len(rows)} questions, top_k={args.top_k})",
           f"LLM: {args.llm_provider}/{args.llm_model} (temperature {args.temperature})  ",
+          f"Text embedder: {args.text_dense_model} · chunks {args.chunk_size} · rerank x{args.rerank_multiplier}  ",
           f"Device: {device_info().get('device', '?')}", "",
           "| metric | value |", "|---|---|"]
     for k in ["gold_hit@1", f"gold_hit@{args.top_k}", "answer_in_context", "answer_contains",
@@ -202,6 +204,8 @@ def main():
     base = out / f"e2e_{tag}_{datetime.now().strftime('%Y%m%d-%H%M%S')}"
     base.with_suffix(".json").write_text(json.dumps({
         "dataset": tag, "collection": collection, "top_k": args.top_k,
+        "text_dense_model": args.text_dense_model, "chunk_size": args.chunk_size,
+        "rerank_multiplier": args.rerank_multiplier,
         "llm": {"provider": args.llm_provider, "model": args.llm_model, "temperature": args.temperature},
         "env": device_info(), "ingestion": ingest_stats, "summary": summary}, indent=2))
     base.with_suffix(".md").write_text(md_text + "\n")

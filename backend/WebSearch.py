@@ -7,6 +7,7 @@ from ddgs import DDGS
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from urllib.parse import urlparse
 from typing import List, Dict, Optional
+from rag_config import CHUNK_SIZE, CHUNK_OVERLAP
 import hashlib
 
 class WebSearch:
@@ -15,8 +16,8 @@ class WebSearch:
         self.vector_db = vector_db
         self.max_results = max_results
         self.splitter = RecursiveCharacterTextSplitter(
-            chunk_size=3000,
-            chunk_overlap=500,
+            chunk_size=CHUNK_SIZE,
+            chunk_overlap=CHUNK_OVERLAP,
             separators=["\n\n", "\n", " ", ""]
         )
     
@@ -85,7 +86,7 @@ class WebSearch:
         chunks = self.splitter.split_text(content)
         
         for i, chunk in enumerate(chunks):
-            _, dense_vector = self.tokenizer.DenseVectorRetrieval(textList=[chunk])
+            dense_vector = self.tokenizer.TextDenseVector(chunk)
             sparse_vector = self.tokenizer.SparseTokens(chunk)
             
             url_hash = hashlib.md5(f"{url}_{i}".encode()).hexdigest()

@@ -27,7 +27,6 @@ class File:
 
     @staticmethod
     def get_image_cache_path(file_path, img_idx):
-        """Generate a cache path for extracted images"""
         cache_dir = Path(".image_cache")
         cache_dir.mkdir(exist_ok=True)
         file_hash = hashlib.md5(str(file_path).encode()).hexdigest()[:8]
@@ -35,14 +34,12 @@ class File:
 
     @staticmethod
     def pil_image_to_bytes(pil_image, format='PNG'):
-        """Convert PIL Image to bytes"""
         buffer = io.BytesIO()
         pil_image.save(buffer, format=format)
         return buffer.getvalue()
 
     @staticmethod
     def extract_pil_image_from_item(item):
-        """Extract PIL image from a Docling PictureItem across different API versions"""
         if hasattr(item, 'image') and item.image is not None:
             img = item.image
             if isinstance(img, Image.Image):
@@ -173,7 +170,7 @@ class File:
 
             chunks = text_splitter.split_text(page_text)
             for chunk_idx, chunk in enumerate(chunks):
-                _, text_dense = tokenizer.DenseVectorRetrieval(textList=[chunk])
+                text_dense = tokenizer.TextDenseVector(chunk)
                 text_sparse = tokenizer.SparseTokens(chunk)
 
                 display_page = page_num

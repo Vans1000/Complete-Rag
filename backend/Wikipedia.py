@@ -3,14 +3,13 @@ import multiprocessing as mp
 import queue
 from datasets import load_dataset
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from rag_config import CHUNK_SIZE, CHUNK_OVERLAP
 
 def _worker_fetch_and_split(worker_id, num_workers, output_queue):
-    """Worker process to fetch, shard, and chunk Wikipedia articles independently."""
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=3000, chunk_overlap=500, separators=["\n\n", "\n", " ", ""]
+        chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP, separators=["\n\n", "\n", " ", ""]
     )
     
-    # Streaming + sharding natively implements the "article_num % num_workers == worker_id" logic
     ds = load_dataset("wikimedia/wikipedia", "20231101.en", split="train", streaming=True)
     shard = ds.shard(num_shards=num_workers, index=worker_id)
     
@@ -27,12 +26,10 @@ def _worker_fetch_and_split(worker_id, num_workers, output_queue):
                     "page": 0, 
                     "path": f"wikipedia/{article['title']}"
                 })
-            # Send processed article to main process (blocks if queue is full to prevent OOM)
             output_queue.put((chunks, metadatas))
     except Exception as e:
         print(f"Worker {worker_id} encountered an error: {e}")
     finally:
-        # Signal to the main process that this worker is completely done
         output_queue.put(None)
 
 class Wikipedia:
@@ -43,7 +40,6 @@ class Wikipedia:
     def ingest_all(self, batch_size=1024, num_workers=4):
         print(f"🚀 Running Multi-Process Distributed Ingestion (Batch Size: {batch_size}, Workers: {num_workers})")
         
-        # Huge queue capacity to buffer chunks and aggressively utilize extra RAM
         output_queue = mp.Queue(maxsize=20000) 
         
         workers = []
@@ -61,7 +57,6 @@ class Wikipedia:
         
         while active_workers > 0:
             try:
-                # Timeout unblocks the loop periodically (safe checks)
                 item = output_queue.get(timeout=1)
             except queue.Empty:
                 continue
@@ -75,7 +70,6 @@ class Wikipedia:
             batch_metadatas.extend(metadatas)
             article_count += 1
             
-            # Slice strictly into maximum batch chunks to maximize GPU efficiency
             while len(batch_chunks) >= batch_size:
                 process_chunks = batch_chunks[:batch_size]
                 process_metadatas = batch_metadatas[:batch_size]
@@ -85,9 +79,8 @@ class Wikipedia:
                 
                 self._process_and_upload_batch(process_chunks, process_metadatas)
                 total_chunks_ingested += len(process_chunks)
-                print(f"✅ Progress: ~{article_count} articles | Total Chunks Uploaded: {total_chunks_ingested}", end='\r')
+                print(f"Progress: ~{article_count} articles | Total Chunks Uploaded: {total_chunks_ingested}", end='\r')
                 
-        # Flush any remaining chunks trailing at the end
         if len(batch_chunks) > 0:
             self._process_and_upload_batch(batch_chunks, batch_metadatas)
             total_chunks_ingested += len(batch_chunks)
@@ -100,11 +93,11 @@ class Wikipedia:
         print(f"Total Points in Qdrant: {total_chunks_ingested}")
 
     def _process_and_upload_batch(self, texts, metadatas):
-        _, dense_vectors = self.tokenizer.BatchDenseVectorRetrieval(text_lists=texts)
+        dense_vectors = self.tokenizer.TextDenseVectors(texts)
         sparse_vectors = self.tokenizer.BatchSparseTokens(texts)
 
         for i in range(len(texts)):
             string_id = f"wiki_{metadatas[i]['title']}_ch{metadatas[i]['chunk_idx']}"
             doc_uuid = str(uuid.uuid5(uuid.NAMESPACE_DNS, string_id))
-            self.vector_db.upload_text(doc_id=doc_uuid, dense_vector=dense_vectors[i], 
+            self.vector_db.upload_text(doc_id=doc_uuid, dense_vector=None if dense_vectors is None else dense_vectors[i], 
                                      sparse_vector=sparse_vectors[i], metadata=metadatas[i])
